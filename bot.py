@@ -179,4 +179,5 @@ async def stop(interaction: discord.Interaction):
 
 # --- START BOT ---
 # Apne token yahan `YOUR_BOT_TOKEN_HERE` ki jagah daalein
-bot.run("YOUR_BOT_TOKEN_HERE")
+bot.run("MTU0MDY4MTI4MjQ2MjQyMTAxNA.GanecV.fAXAEvflA8astQj15hMMSEYkDnH9FMpT2YzODo")
+
