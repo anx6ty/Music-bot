@@ -45,10 +45,10 @@ CUSTOM_EMOJI_IDS = {
 
 # unicode fallbacks used until you fill in real IDs above
 _FALLBACK_EMOJI = {
-    "pause":   "⏸",
-    "resume":  "▶️",
-    "skip":    "⏯",
-    "shuffle": "🔀",
+    "pause":      "⏸",
+    "resume":     "▶️",
+    "skip":       "⏯",
+    "shuffle":    "🔀",
     "loop_off":   "🔁",
     "loop_track": "🔂",
     "loop_queue": "🔁",
