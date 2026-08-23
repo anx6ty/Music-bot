@@ -34,6 +34,30 @@ FFMPEG_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
+
+# --- SAFE SEND HELPERS (avoid passing view=None which discord.py rejects) ---
+
+async def safe_send_channel(channel, text=None, embed=None, view=None):
+    kwargs = {}
+    if text is not None:
+        kwargs["content"] = text
+    if embed is not None:
+        kwargs["embed"] = embed
+    if view is not None:
+        kwargs["view"] = view
+    return await channel.send(**kwargs)
+
+
+async def safe_send_followup(interaction, text=None, embed=None, view=None):
+    kwargs = {}
+    if text is not None:
+        kwargs["content"] = text
+    if embed is not None:
+        kwargs["embed"] = embed
+    if view is not None:
+        kwargs["view"] = view
+    return await interaction.followup.send(**kwargs)
+
 # --- INTERACTIVE MUSIC BUTTONS ---
 class ControlButtons(discord.ui.View):
     def __init__(self, guild_id):
@@ -152,7 +176,7 @@ async def on_message(message: discord.Message):
                         channel=message.channel,
                         user=message.author,
                         query=query,
-                        send_func=lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view)
+                        send_func=lambda embed=None, view=None, text=None: safe_send_channel(message.channel, text=text, embed=embed, view=view)
                     )
             except Exception as e:
                 print(f"[ON_MESSAGE PLAY ERROR] {e}")
@@ -172,7 +196,7 @@ async def play(interaction: discord.Interaction, query: str):
             channel=interaction.channel,
             user=interaction.user,
             query=query,
-            send_func=lambda embed=None, view=None, text=None: interaction.followup.send(content=text, embed=embed, view=view)
+            send_func=lambda embed=None, view=None, text=None: safe_send_followup(interaction, text=text, embed=embed, view=view)
         )
     except Exception as e:
         print(f"[PLAY COMMAND ERROR] {e}")
@@ -249,3 +273,4 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
+
