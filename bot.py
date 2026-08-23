@@ -25,6 +25,11 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web'],
+        }
+    },
 }
 
 FFMPEG_OPTIONS = {
@@ -122,8 +127,9 @@ async def play_music_logic(channel, user, query, send_func):
         thumbnail = data.get('thumbnail', None)
 
     except Exception as e:
-        print(f"[FETCH ERROR] {e}")
-        return await send_func(text=f"😵‍💫 Dug through the internet but came up empty-handed for that one.\n`{str(e)}`")
+        error_detail = str(e) if str(e) else f"{type(e).__name__} (no message)"
+        print(f"[FETCH ERROR] {type(e).__name__}: {e!r}")
+        return await send_func(text=f"😵‍💫 Dug through the internet but came up empty-handed for that one.\n`{error_detail}`")
 
     try:
         source = discord.FFmpegPCMAudio(song_url, **FFMPEG_OPTIONS)
@@ -151,12 +157,21 @@ async def play_music_logic(channel, user, query, send_func):
         else:
             print(f"[PLAY ERROR] {e}")
             await send_func(text=f"❌ Something went wrong while trying to play the track.\n`{str(e)}`")
-    except FileNotFoundError:
-        print("[PLAY ERROR] ffmpeg was not found")
+    except discord.ClientException as e:
+        error_detail = str(e) if str(e) else type(e).__name__
+        if "ffmpeg" in error_detail.lower():
+            print("[PLAY ERROR] ffmpeg was not found")
+            await send_func(text="❌ Audio engine (FFmpeg) is not installed on the server. Please contact the bot host to fix this.")
+        else:
+            print(f"[PLAY ERROR] ClientException: {error_detail!r}")
+            await send_func(text=f"❌ Something went wrong while trying to play the track.\n`ClientException: {error_detail}`")
+    except FileNotFoundError as e:
+        print(f"[PLAY ERROR] FileNotFoundError: {e!r}")
         await send_func(text="❌ Audio engine (FFmpeg) is not installed on the server. Please contact the bot host to fix this.")
     except Exception as e:
-        print(f"[PLAY ERROR] {e}")
-        await send_func(text=f"❌ Something went wrong while trying to play the track.\n`{str(e)}`")
+        error_detail = str(e) if str(e) else f"{type(e).__name__} (no message)"
+        print(f"[PLAY ERROR] {type(e).__name__}: {e!r}")
+        await send_func(text=f"❌ Something went wrong while trying to play the track.\n`{error_detail}`")
 
 # --- BOT EVENTS ---
 @bot.event
@@ -283,4 +298,3 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
-
