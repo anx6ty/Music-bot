@@ -97,7 +97,7 @@ class ControlButtons(discord.ui.View):
 # --- HELPER FUNCTION FOR PLAYING MUSIC ---
 async def play_music_logic(channel, user, query, send_func):
     if not user.voice or not user.voice.channel:
-        return await send_func(text="❌ You need to join a voice channel first!")
+        return await send_func(text="🚫 Yo, hop into a voice channel first — I can't vibe alone!")
 
     voice_channel = user.voice.channel
     guild = user.guild
@@ -123,7 +123,7 @@ async def play_music_logic(channel, user, query, send_func):
 
     except Exception as e:
         print(f"[FETCH ERROR] {e}")
-        return await send_func(text=f"❌ Couldn't find or fetch that track.\n`{str(e)}`")
+        return await send_func(text=f"😵‍💫 Dug through the internet but came up empty-handed for that one.\n`{str(e)}`")
 
     try:
         source = discord.FFmpegPCMAudio(song_url, **FFMPEG_OPTIONS)
@@ -133,13 +133,13 @@ async def play_music_logic(channel, user, query, send_func):
         vc.play(source)
 
         embed = discord.Embed(
-            title="🎶 Now Playing",
-            description=f"**[{song_title}]({data.get('webpage_url', '')})**\n\n`[▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬]` Duration: `{song_duration}`",
+            title="🎧 Now Spinning",
+            description=f"**[{song_title}]({data.get('webpage_url', '')})**\n\n`[▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬]` ⏱️ `{song_duration}`",
             color=discord.Color.from_rgb(255, 0, 127)
         )
         if thumbnail:
             embed.set_thumbnail(url=thumbnail)
-        embed.set_footer(text=f"Requested by {user.display_name}", icon_url=user.display_avatar.url)
+        embed.set_footer(text=f"🎙️ Dropped by {user.display_name}", icon_url=user.display_avatar.url)
 
         view = ControlButtons(guild.id)
         await send_func(embed=embed, view=view)
@@ -283,3 +283,4 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
+
