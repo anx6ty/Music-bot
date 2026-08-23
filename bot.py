@@ -40,7 +40,7 @@ CUSTOM_EMOJI_IDS = {
     "loop_off":   None,
     "loop_track": None,
     "loop_queue": None,
-    "stop":    1541046530478317648,
+    "stop":       None,
 }
 
 # unicode fallbacks used until you fill in real IDs above
