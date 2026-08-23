@@ -49,7 +49,7 @@ _FALLBACK_EMOJI = {
     "resume":  "1541036052591018028",
     "skip":    "1541038015751659540",
     "shuffle": "1541036128558391357",
-    "loop_off":   "",
+    "loop_off":   "🔁",
     "loop_track": "🔂",
     "loop_queue": "🔁",
     "stop":    "1541029774477230150",
