@@ -73,7 +73,7 @@ class ControlButtons(discord.ui.View):
 # --- HELPER FUNCTION FOR PLAYING MUSIC ---
 async def play_music_logic(channel, user, query, send_func):
     if not user.voice or not user.voice.channel:
-        return await send_func("❌ Pehle kisi Voice Channel me join karein!")
+        return await send_func(text="❌ Pehle kisi Voice Channel me join karein!")
 
     voice_channel = user.voice.channel
     guild = user.guild
@@ -98,7 +98,8 @@ async def play_music_logic(channel, user, query, send_func):
         thumbnail = data.get('thumbnail', None)
 
     except Exception as e:
-        return await send_func(f"❌ Track fetch karne me error aaya: `{str(e)}`")
+        print(f"[FETCH ERROR] {e}")
+        return await send_func(text=f"❌ Track fetch karne me error aaya: `{str(e)}`")
 
     try:
         source = discord.FFmpegPCMAudio(song_url, **FFMPEG_OPTIONS)
@@ -120,7 +121,8 @@ async def play_music_logic(channel, user, query, send_func):
         await send_func(embed=embed, view=view)
 
     except Exception as e:
-        await send_func(f"❌ Music play karte waqt error aaya: `{str(e)}`")
+        print(f"[PLAY ERROR] {e}")
+        await send_func(text=f"❌ Music play karte waqt error aaya: `{str(e)}`")
 
 # --- BOT EVENTS ---
 @bot.event
@@ -140,17 +142,21 @@ async def on_message(message: discord.Message):
     # Check if bot is mentioned
     if bot.user in message.mentions:
         content = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
-        
+
         # Check for 'p' or 'play' prefix
         if content.startswith('p ') or content.startswith('play '):
             query = content.split(' ', 1)[1]
-            async with message.channel.typing():
-                await play_music_logic(
-                    channel=message.channel,
-                    user=message.author,
-                    query=query,
-                    send_func=lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view)
-                )
+            try:
+                async with message.channel.typing():
+                    await play_music_logic(
+                        channel=message.channel,
+                        user=message.author,
+                        query=query,
+                        send_func=lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view)
+                    )
+            except Exception as e:
+                print(f"[ON_MESSAGE PLAY ERROR] {e}")
+                await message.channel.send(f"❌ Kuch galat ho gaya: `{str(e)}`")
             return
 
     await bot.process_commands(message)
@@ -161,22 +167,26 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="play", description="Play a song in your voice channel")
 async def play(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
-    await play_music_logic(
-        channel=interaction.channel,
-        user=interaction.user,
-        query=query,
-        send_func=lambda embed=None, view=None, text=None: interaction.followup.send(content=text, embed=embed, view=view)
-    )
+    try:
+        await play_music_logic(
+            channel=interaction.channel,
+            user=interaction.user,
+            query=query,
+            send_func=lambda embed=None, view=None, text=None: interaction.followup.send(content=text, embed=embed, view=view)
+        )
+    except Exception as e:
+        print(f"[PLAY COMMAND ERROR] {e}")
+        await interaction.followup.send(f"❌ Kuch galat ho gaya: `{str(e)}`")
 
-# 2. /setpfp Command (Profile Picture)
-@bot.tree.command(name="setpfp", description="Change the bot profile picture (Admin Only)")
+# 2. /setpfp Command (Server-specific Profile Picture)
+@bot.tree.command(name="setpfp", description="Change the bot's profile picture for THIS server only")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpfp(interaction: discord.Interaction, image: discord.Attachment):
     await interaction.response.defer(ephemeral=True)
     try:
         image_bytes = await image.read()
-        await bot.user.edit(avatar=image_bytes)
-        await interaction.followup.send("✅ Profile picture updated successfully!")
+        await interaction.guild.me.edit(avatar=image_bytes)
+        await interaction.followup.send("✅ Profile picture updated for this server only!")
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to update avatar: `{str(e)}`")
 
@@ -188,7 +198,10 @@ async def setbanner(interaction: discord.Interaction, image: discord.Attachment)
     try:
         image_bytes = await image.read()
         await bot.user.edit(banner=image_bytes)
-        await interaction.followup.send("✅ Banner updated successfully!")
+        await interaction.followup.send(
+            "✅ Banner updated! Note: Discord banners are always global "
+            "(same across all servers) - Discord doesn't allow per-server banners for bots."
+        )
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to update banner: `{str(e)}`")
 
@@ -235,5 +248,4 @@ token = os.getenv("DISCORD_TOKEN")
 if token:
     bot.run(token)
 else:
-    # Variable na hone par direct token paste kar sakte hain
-    bot.run("YOUR_BOT_TOKEN_HERE")
+    raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
