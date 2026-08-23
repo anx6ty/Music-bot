@@ -97,7 +97,7 @@ class ControlButtons(discord.ui.View):
 # --- HELPER FUNCTION FOR PLAYING MUSIC ---
 async def play_music_logic(channel, user, query, send_func):
     if not user.voice or not user.voice.channel:
-        return await send_func(text="❌ Pehle kisi Voice Channel me join karein!")
+        return await send_func(text="❌ You need to join a voice channel first!")
 
     voice_channel = user.voice.channel
     guild = user.guild
@@ -123,7 +123,7 @@ async def play_music_logic(channel, user, query, send_func):
 
     except Exception as e:
         print(f"[FETCH ERROR] {e}")
-        return await send_func(text=f"❌ Track fetch karne me error aaya: `{str(e)}`")
+        return await send_func(text=f"❌ Couldn't find or fetch that track.\n`{str(e)}`")
 
     try:
         source = discord.FFmpegPCMAudio(song_url, **FFMPEG_OPTIONS)
@@ -144,9 +144,12 @@ async def play_music_logic(channel, user, query, send_func):
         view = ControlButtons(guild.id)
         await send_func(embed=embed, view=view)
 
+    except FileNotFoundError:
+        print("[PLAY ERROR] ffmpeg was not found")
+        await send_func(text="❌ Audio engine (FFmpeg) is not installed on the server. Please contact the bot host to fix this.")
     except Exception as e:
         print(f"[PLAY ERROR] {e}")
-        await send_func(text=f"❌ Music play karte waqt error aaya: `{str(e)}`")
+        await send_func(text=f"❌ Something went wrong while trying to play the track.\n`{str(e)}`")
 
 # --- BOT EVENTS ---
 @bot.event
@@ -180,7 +183,7 @@ async def on_message(message: discord.Message):
                     )
             except Exception as e:
                 print(f"[ON_MESSAGE PLAY ERROR] {e}")
-                await message.channel.send(f"❌ Kuch galat ho gaya: `{str(e)}`")
+                await message.channel.send(f"❌ Something went wrong: `{str(e)}`")
             return
 
     await bot.process_commands(message)
@@ -200,7 +203,7 @@ async def play(interaction: discord.Interaction, query: str):
         )
     except Exception as e:
         print(f"[PLAY COMMAND ERROR] {e}")
-        await interaction.followup.send(f"❌ Kuch galat ho gaya: `{str(e)}`")
+        await interaction.followup.send(f"❌ Something went wrong: `{str(e)}`")
 
 # 2. /setpfp Command (Server-specific Profile Picture)
 @bot.tree.command(name="setpfp", description="Change the bot's profile picture for THIS server only")
@@ -265,7 +268,7 @@ async def stop(interaction: discord.Interaction):
         await vc.disconnect()
         await interaction.response.send_message("⏹️ Disconnected from Voice Channel.")
     else:
-        await interaction.response.send_message("❌ Bot VC me nahi hai.", ephemeral=True)
+        await interaction.response.send_message("❌ I'm not in a voice channel.", ephemeral=True)
 
 # --- START BOT ---
 token = os.getenv("DISCORD_TOKEN")
