@@ -1,6 +1,6 @@
 discord.py[voice]
 pynacl
-yt-dlp
+yt-dlp>=2025.6.9
 spotipy
 openai
 python-dotenv
