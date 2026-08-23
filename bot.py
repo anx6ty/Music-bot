@@ -33,10 +33,10 @@ PURPLE = discord.Color.from_rgb(155, 93, 229)  # updated to match the new "sigil
 # The bot must be a member of a server that owns the emoji to render it.
 # Leave an entry as None to fall back to a unicode emoji automatically.
 CUSTOM_EMOJI_IDS = {
-    "pause":   1541049440859725965,   # e.g. 1234567890123456789
-    "resume":  1541049521994211380,
-    "skip":    1541046457912791111,
-    "shuffle": None,
+    "pause":      None,   # e.g. 1234567890123456789
+    "resume":     None,
+    "skip":       None,
+    "shuffle":    None,
     "loop_off":   None,
     "loop_track": None,
     "loop_queue": None,
