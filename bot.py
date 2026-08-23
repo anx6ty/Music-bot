@@ -144,6 +144,13 @@ async def play_music_logic(channel, user, query, send_func):
         view = ControlButtons(guild.id)
         await send_func(embed=embed, view=view)
 
+    except discord.ClientException as e:
+        if "ffmpeg" in str(e).lower():
+            print("[PLAY ERROR] ffmpeg was not found")
+            await send_func(text="❌ Audio engine (FFmpeg) is not installed on the server. Please contact the bot host to fix this.")
+        else:
+            print(f"[PLAY ERROR] {e}")
+            await send_func(text=f"❌ Something went wrong while trying to play the track.\n`{str(e)}`")
     except FileNotFoundError:
         print("[PLAY ERROR] ffmpeg was not found")
         await send_func(text="❌ Audio engine (FFmpeg) is not installed on the server. Please contact the bot host to fix this.")
@@ -276,4 +283,3 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
-
