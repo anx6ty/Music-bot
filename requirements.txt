@@ -1,3 +1,5 @@
-discord.py>=2.5.0
+discord.py[voice]
 yt-dlp
+spotipy
+python-dotenv
 PyNaCl
