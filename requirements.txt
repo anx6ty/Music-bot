@@ -3,3 +3,5 @@ yt-dlp
 spotipy
 python-dotenv
 PyNaCl
+spotdl
+requests
