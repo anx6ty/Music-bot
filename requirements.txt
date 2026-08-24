@@ -1,7 +1,7 @@
 discord.py[voice]
 yt-dlp
+spotdl>=4.5.2
 spotipy
-python-dotenv
-PyNaCl
-spotdl
 requests
+PyNaCl
+python-dotenv
