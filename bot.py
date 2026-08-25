@@ -45,8 +45,8 @@ def add_support_button(view=None):
     if view is None:
         view = discord.ui.View(timeout=None)
     view.add_item(discord.ui.Button(
-        label="Report a Bug or Suggest a Feature",
-        emoji="🛠️",
+        label="Support",
+        emoji="🛟",
         style=discord.ButtonStyle.link,
         url=SUPPORT_SERVER_INVITE,
     ))
@@ -183,6 +183,50 @@ def get_loop_label(guild_id):
     return "Off"
 
 
+def format_time(seconds):
+    seconds = int(max(0, seconds))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h:d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def get_elapsed_seconds(guild_id):
+    song = current_song.get(guild_id)
+    if not song:
+        return 0
+    now = time.time()
+    elapsed = now - song.get("start_time", now) - song.get("paused_total", 0.0)
+    if song.get("paused_at"):
+        elapsed -= (now - song["paused_at"])
+    duration = song.get("duration_sec") or 0
+    if duration:
+        return max(0, min(elapsed, duration))
+    return max(0, elapsed)
+
+
+def build_progress_bar(elapsed, duration, length=18):
+    if not duration:
+        return "▬" * length
+    ratio = max(0, min(elapsed / duration, 1))
+    pos = int(ratio * (length - 1))
+    return "".join("🔘" if i == pos else "▬" for i in range(length))
+
+
+def mark_paused(guild_id):
+    song = current_song.get(guild_id)
+    if song and not song.get("paused_at"):
+        song["paused_at"] = time.time()
+
+
+def mark_resumed(guild_id):
+    song = current_song.get(guild_id)
+    if song and song.get("paused_at"):
+        song["paused_total"] = song.get("paused_total", 0.0) + (time.time() - song["paused_at"])
+        song["paused_at"] = None
+
+
 def format_queue_names(guild_id, limit=8):
     queue = get_queue(guild_id)
     if not queue:
@@ -198,6 +242,42 @@ def format_queue_names(guild_id, limit=8):
 
 def server_status():
     return f"✦ Casting {len(bot.guilds)} servers"
+
+
+# --- SHARED HTTP SESSION ---
+# Reusing one aiohttp session (instead of opening a fresh TCP/TLS connection
+# for every Spotify/API call) cuts noticeable latency off replies.
+_http_session = None
+
+
+async def get_http_session():
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
+# --- NATIVE DISCORD VOICE CHANNEL STATUS ---
+# This is the small status text Discord shows under a voice channel's name —
+# separate from the bot's presence/activity. Needs the "Set Voice Channel
+# Status" permission. Not yet wrapped by discord.py, so we call the REST
+# endpoint directly.
+async def set_vc_status(channel_id, status_text):
+    if not channel_id:
+        return
+    session = await get_http_session()
+    url = f"https://discord.com/api/v10/channels/{channel_id}/voice-status"
+    headers = {
+        "Authorization": f"Bot {os.getenv('DISCORD_TOKEN')}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with session.put(url, headers=headers, json={"status": (status_text or "")[:500]}) as resp:
+            if resp.status not in (200, 204):
+                body = await resp.text()
+                print(f"[VC STATUS ERROR] {resp.status}: {body}")
+    except Exception as e:
+        print(f"[VC STATUS ERROR] {e}")
 
 
 # --- SPOTIFY SUPPORT ---
@@ -229,9 +309,9 @@ async def resolve_spotify_short_link(url):
     """Share links (open.spotify.com/s/xxxx) 302-redirect to the real
     track/playlist/album URL — follow that redirect to get the canonical link."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                return str(resp.url)
+        session = await get_http_session()
+        async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            return str(resp.url)
     except Exception as e:
         print(f"[SPOTIFY REDIRECT ERROR] {e}")
         return url
@@ -243,20 +323,20 @@ async def get_spotify_token():
     if _spotify_token_cache["token"] and time.time() < _spotify_token_cache["expires_at"] - 30:
         return _spotify_token_cache["token"]
     try:
-        async with aiohttp.ClientSession() as session:
-            auth = aiohttp.BasicAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
-            async with session.post(
-                "https://accounts.spotify.com/api/token",
-                data={"grant_type": "client_credentials"},
-                auth=auth,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                _spotify_token_cache["token"] = data.get("access_token")
-                _spotify_token_cache["expires_at"] = time.time() + data.get("expires_in", 3600)
-                return _spotify_token_cache["token"]
+        session = await get_http_session()
+        auth = aiohttp.BasicAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
+        async with session.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "client_credentials"},
+            auth=auth,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            _spotify_token_cache["token"] = data.get("access_token")
+            _spotify_token_cache["expires_at"] = time.time() + data.get("expires_in", 3600)
+            return _spotify_token_cache["token"]
     except Exception as e:
         print(f"[SPOTIFY TOKEN ERROR] {e}")
         return None
@@ -267,16 +347,16 @@ async def spotify_get(endpoint):
     if not token:
         return None
     try:
-        async with aiohttp.ClientSession() as session:
-            headers = {"Authorization": f"Bearer {token}"}
-            async with session.get(
-                f"https://api.spotify.com/v1/{endpoint}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.json()
+        session = await get_http_session()
+        headers = {"Authorization": f"Bearer {token}"}
+        async with session.get(
+            f"https://api.spotify.com/v1/{endpoint}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
     except Exception as e:
         print(f"[SPOTIFY API ERROR] {e}")
         return None
@@ -293,16 +373,16 @@ async def _spotify_oembed_title(url):
     endpoint. This only returns a single title, so it works for individual
     tracks but can't enumerate a playlist or album."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://open.spotify.com/oembed",
-                params={"url": url},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                return data.get("title")
+        session = await get_http_session()
+        async with session.get(
+            "https://open.spotify.com/oembed",
+            params={"url": url},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            return data.get("title")
     except Exception as e:
         print(f"[SPOTIFY OEMBED ERROR] {e}")
         return None
@@ -398,6 +478,8 @@ async def resolve_query_items(query, requester):
             "thumbnail": e.get("thumbnail"),
             "webpage_url": e.get("webpage_url", ""),
             "requester": requester,
+            "stream_url": e.get("url"),
+            "duration_sec": e.get("duration") or 0,
         }]
 
     return [{
@@ -406,6 +488,8 @@ async def resolve_query_items(query, requester):
         "thumbnail": data.get("thumbnail"),
         "webpage_url": data.get("webpage_url", ""),
         "requester": requester,
+        "stream_url": data.get("url"),
+        "duration_sec": data.get("duration") or 0,
     }]
 
 
@@ -469,8 +553,16 @@ def build_now_playing_embed(guild_id, paused=False):
         embed.set_footer(text="✦ Queue a track with /play")
         return embed
 
+    elapsed = get_elapsed_seconds(guild_id)
+    duration_sec = song.get("duration_sec") or 0
+    bar = build_progress_bar(elapsed, duration_sec)
+
     embed = discord.Embed(
-        description=f"### [{song['title']}]({song.get('webpage_url', '') or song['title']})",
+        description=(
+            f"### [{song['title']}]({song.get('webpage_url', '') or song['title']})\n"
+            f"{bar}\n"
+            f"`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`"
+        ),
         color=PURPLE
     )
     embed.set_author(name="⏸️  SPELL PAUSED" if paused else "◈  NOW CASTING")
@@ -632,6 +724,7 @@ class MusicView(discord.ui.View):
 
         if vc.is_playing():
             vc.pause()
+            mark_paused(self.guild_id)
             await interaction.response.edit_message(
                 embed=build_now_playing_embed(self.guild_id, paused=True),
                 view=MusicView(self.guild_id)
@@ -639,6 +732,7 @@ class MusicView(discord.ui.View):
             await interaction.channel.send(f"⏸️ Spell paused by {interaction.user.mention}")
         elif vc.is_paused():
             vc.resume()
+            mark_resumed(self.guild_id)
             await interaction.response.edit_message(
                 embed=build_now_playing_embed(self.guild_id, paused=False),
                 view=MusicView(self.guild_id)
@@ -704,11 +798,13 @@ async def stop_playback(guild, delete_message=None):
 
     vc = guild.voice_client
     if vc:
+        channel_id = vc.channel.id if vc.channel else None
         vc.stop()
         try:
             await vc.disconnect()
         except discord.HTTPException:
             pass
+        await set_vc_status(channel_id, "")
 
     current_song.pop(guild_id, None)
     await delete_now_playing(guild_id)
@@ -726,6 +822,8 @@ async def play_next(guild, channel, send_func=None):
     if not vc:
         return
 
+    prefetch = None
+
     if loop_modes.get(guild_id) == "track" and current_song.get(guild_id):
         query = current_song[guild_id]["_query"]
         requester = current_song[guild_id]["requester"]
@@ -733,38 +831,51 @@ async def play_next(guild, channel, send_func=None):
         queue = get_queue(guild_id)
         if not queue:
             current_song.pop(guild_id, None)
+            channel_id = vc.channel.id if vc.channel else None
             await delete_now_playing(guild_id)
             try:
                 await vc.disconnect()
             except discord.HTTPException:
                 pass
+            await set_vc_status(channel_id, "")
             return
         item = queue.pop(0)
         query = item["query"]
         requester = item["requester"]
+        if item.get("stream_url"):
+            prefetch = item
 
     loop = asyncio.get_event_loop()
     try:
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-        if not data:
-            raise RuntimeError("No media result returned.")
+        if prefetch:
+            # Already have everything from resolve_query_items — skip re-extracting.
+            song_url = prefetch["stream_url"]
+            title = prefetch.get("title", "Unknown Track")
+            duration_sec = prefetch.get("duration_sec") or 0
+            thumbnail = prefetch.get("thumbnail")
+            webpage_url = prefetch.get("webpage_url", "")
+        else:
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+            if not data:
+                raise RuntimeError("No media result returned.")
 
-        if data.get("entries"):
-            entries = [e for e in data["entries"] if e]
-            if not entries:
-                raise RuntimeError("No playable entries found.")
-            data = entries[0]
+            if data.get("entries"):
+                entries = [e for e in data["entries"] if e]
+                if not entries:
+                    raise RuntimeError("No playable entries found.")
+                data = entries[0]
 
-        song_url = data.get("url")
-        if not song_url:
-            raise RuntimeError("No playable audio URL found.")
+            song_url = data.get("url")
+            if not song_url:
+                raise RuntimeError("No playable audio URL found.")
 
-        title = data.get("title", "Unknown Track")
-        duration_sec = data.get("duration") or 0
+            title = data.get("title", "Unknown Track")
+            duration_sec = data.get("duration") or 0
+            thumbnail = data.get("thumbnail")
+            webpage_url = data.get("webpage_url", "")
+
         minutes, seconds = divmod(int(duration_sec), 60)
         duration_str = f"{minutes:02d}:{seconds:02d}"
-        thumbnail = data.get("thumbnail")
-        webpage_url = data.get("webpage_url", "")
 
     except Exception as e:
         error_detail = str(e) if str(e) else type(e).__name__
@@ -781,8 +892,12 @@ async def play_next(guild, channel, send_func=None):
         "webpage_url": webpage_url,
         "thumbnail": thumbnail,
         "duration_str": duration_str,
+        "duration_sec": duration_sec,
         "requester": requester,
         "_query": query,
+        "start_time": time.time(),
+        "paused_at": None,
+        "paused_total": 0.0,
     }
 
     def after_play(error):
@@ -831,6 +946,8 @@ async def play_next(guild, channel, send_func=None):
             await old_msg.delete()
         except (discord.NotFound, discord.HTTPException):
             pass
+
+    await set_vc_status(vc.channel.id, f"🎶 {title}"[:100])
 
     msg = await channel.send(embed=build_now_playing_embed(guild_id, paused=False), view=MusicView(guild_id))
     now_playing_messages[guild_id] = msg
@@ -990,6 +1107,7 @@ async def on_message(message: discord.Message):
             vc = message.guild.voice_client
             if vc and vc.is_playing():
                 vc.pause()
+                mark_paused(message.guild.id)
                 await update_now_playing_message(message.guild.id)
                 await message.channel.send(f"⏸️ Paused by {message.author.mention}")
             else:
@@ -1000,6 +1118,7 @@ async def on_message(message: discord.Message):
             vc = message.guild.voice_client
             if vc and vc.is_paused():
                 vc.resume()
+                mark_resumed(message.guild.id)
                 await update_now_playing_message(message.guild.id)
                 await message.channel.send(f"▶️ Resumed by {message.author.mention}")
             else:
@@ -1147,6 +1266,7 @@ async def pause(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Nothing is playing.", ephemeral=True)
         return
     vc.pause()
+    mark_paused(interaction.guild.id)
     await interaction.response.send_message(f"⏸️ Spell paused by {interaction.user.mention}")
     await update_now_playing_message(interaction.guild.id)
 
@@ -1158,6 +1278,7 @@ async def resume(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Nothing is paused.", ephemeral=True)
         return
     vc.resume()
+    mark_resumed(interaction.guild.id)
     await interaction.response.send_message(f"▶️ Spell resumes... by {interaction.user.mention}")
     await update_now_playing_message(interaction.guild.id)
 
@@ -1175,3 +1296,4 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
+
