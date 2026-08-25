@@ -132,6 +132,7 @@ guild_prefixes = {}         # guild_id -> custom quick-play prefix set via /conf
 CONFIG_FILE = "guild_config.json"
 QUEUE_NOTICE_BUTTON_TIMEOUT = 30
 QUEUE_NOTICE_DELETE_AFTER = 60
+NOW_PLAYING_REFRESH_SECONDS = 2  # Discord throttles message edits (~5 per 5s per channel); 1s was too fast and got rate-limited into freezing
 
 
 def load_config():
@@ -215,13 +216,13 @@ def get_elapsed_seconds(guild_id):
     return max(0, elapsed)
 
 
-def build_progress_bar(elapsed, duration, length=24):
+def build_progress_bar(elapsed, duration, length=20):
     if not duration:
-        return "_"
+        return "●"
     ratio = max(0, min(elapsed / duration, 1))
     filled = max(1, round(ratio * length))
     empty = length - filled
-    return "_" * filled + "‾" * empty
+    return "●" * filled + "○" * empty
 
 
 def mark_paused(guild_id):
@@ -558,12 +559,15 @@ async def resolve_query_items(query, requester):
     }]
 
 
-# --- LIVE "NOW PLAYING" REFRESH (updates the embed every 1 second) ---
+# --- LIVE "NOW PLAYING" REFRESH (updates the embed every 2 seconds) ---
 
 async def update_now_playing_message(guild_id):
+    """Edits the Now Playing embed. Returns a backoff delay (seconds) if
+    Discord rate-limited the edit, so the caller can wait it out instead of
+    silently freezing on a stale bar."""
     msg = now_playing_messages.get(guild_id)
     if not msg or not current_song.get(guild_id):
-        return
+        return None
     guild = bot.get_guild(guild_id)
     vc = guild.voice_client if guild else None
     try:
@@ -571,24 +575,31 @@ async def update_now_playing_message(guild_id):
             embed=build_now_playing_embed(guild_id, paused=(vc.is_paused() if vc else False)),
             view=MusicView(guild_id)
         )
+        return None
     except discord.NotFound:
         now_playing_messages.pop(guild_id, None)
+        return None
     except discord.HTTPException as e:
-        # Rate limited (or a transient error) — just skip this tick, the next
-        # one will catch up. Discord edits are throttled around ~5 per 5s per
-        # channel, so at 1s intervals this will bite occasionally.
         if getattr(e, "status", None) == 429:
-            print(f"[REFRESH RATE LIMITED] guild {guild_id}: retry_after={getattr(e, 'retry_after', '?')}")
-        else:
-            print(f"[REFRESH ERROR] {e}")
+            retry_after = getattr(e, "retry_after", None) or 3
+            print(f"[REFRESH RATE LIMITED] guild {guild_id}: backing off {retry_after}s")
+            return retry_after
+        print(f"[REFRESH ERROR] {e}")
+        return None
 
 
 async def now_playing_refresh_loop(guild_id):
     try:
         while current_song.get(guild_id):
-            await asyncio.sleep(1)
-            if current_song.get(guild_id):
-                await update_now_playing_message(guild_id)
+            await asyncio.sleep(NOW_PLAYING_REFRESH_SECONDS)
+            if not current_song.get(guild_id):
+                break
+            backoff = await update_now_playing_message(guild_id)
+            if backoff:
+                # Actually wait out the rate limit instead of hammering it
+                # again next tick — this is what was causing the bar to
+                # freeze instead of catching back up.
+                await asyncio.sleep(backoff)
     except asyncio.CancelledError:
         pass
     finally:
@@ -650,7 +661,7 @@ def build_now_playing_embed(guild_id, paused=False):
     requester = song.get("requester")
     if requester:
         embed.set_footer(
-            text=f"🪄 cast by {requester.display_name} · updates every 1s",
+            text=f"🪄 cast by {requester.display_name} · updates every 2s",
             icon_url=requester.display_avatar.url
         )
 
@@ -896,8 +907,6 @@ async def play_next(guild, channel, send_func=None):
     if not vc:
         return
 
-    prefetch = None
-
     if loop_modes.get(guild_id) == "track" and current_song.get(guild_id):
         query = current_song[guild_id]["_query"]
         requester = current_song[guild_id]["requester"]
@@ -917,37 +926,32 @@ async def play_next(guild, channel, send_func=None):
         item = queue.pop(0)
         query = item["query"]
         requester = item["requester"]
-        if item.get("stream_url"):
-            prefetch = item
 
     loop = asyncio.get_event_loop()
     try:
-        if prefetch:
-            # Already have everything from resolve_query_items — skip re-extracting.
-            song_url = prefetch["stream_url"]
-            title = prefetch.get("title", "Unknown Track")
-            duration_sec = prefetch.get("duration_sec") or 0
-            thumbnail = prefetch.get("thumbnail")
-            webpage_url = prefetch.get("webpage_url", "")
-        else:
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-            if not data:
-                raise RuntimeError("No media result returned.")
+        # Always extract fresh at play time. A stream URL cached from an
+        # earlier search-time extraction can go stale or behave inconsistently
+        # through ffmpeg, which was causing playback to die a few seconds in
+        # and restart from zero — re-extracting here trades a little latency
+        # for reliable, full-length playback.
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+        if not data:
+            raise RuntimeError("No media result returned.")
 
-            if data.get("entries"):
-                entries = [e for e in data["entries"] if e]
-                if not entries:
-                    raise RuntimeError("No playable entries found.")
-                data = entries[0]
+        if data.get("entries"):
+            entries = [e for e in data["entries"] if e]
+            if not entries:
+                raise RuntimeError("No playable entries found.")
+            data = entries[0]
 
-            song_url = data.get("url")
-            if not song_url:
-                raise RuntimeError("No playable audio URL found.")
+        song_url = data.get("url")
+        if not song_url:
+            raise RuntimeError("No playable audio URL found.")
 
-            title = data.get("title", "Unknown Track")
-            duration_sec = data.get("duration") or 0
-            thumbnail = data.get("thumbnail")
-            webpage_url = data.get("webpage_url", "")
+        title = data.get("title", "Unknown Track")
+        duration_sec = data.get("duration") or 0
+        thumbnail = data.get("thumbnail")
+        webpage_url = data.get("webpage_url", "")
 
         minutes, seconds = divmod(int(duration_sec), 60)
         duration_str = f"{minutes:02d}:{seconds:02d}"
@@ -1480,3 +1484,4 @@ if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
+
