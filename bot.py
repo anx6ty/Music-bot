@@ -1341,6 +1341,17 @@ async def setpfp(interaction: discord.Interaction, image: discord.Attachment):
         await interaction.followup.send(f"❌ Failed to update avatar: `{str(e)}`", view=add_support_button())
 
 
+@bot.tree.command(name="resetpfp", description="Reset the bot's avatar back to default for THIS server only (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def resetpfp(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        await interaction.guild.me.edit(avatar=None)
+        await interaction.followup.send("✅ Avatar reset to default for this server.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to reset avatar: `{str(e)}`", view=add_support_button())
+
+
 @bot.tree.command(name="setbanner", description="Change the bot profile banner (Admin Only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setbanner(interaction: discord.Interaction, image: discord.Attachment):
@@ -1476,6 +1487,34 @@ async def geninvite(interaction: discord.Interaction, server_id: str):
         await interaction.response.send_message("❌ Missing permission to create an invite there.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Failed to create invite: `{e}`", ephemeral=True)
+
+
+@bot.tree.command(name="resetpfpall", description="(Bot owner only) Reset the bot's avatar back to default in EVERY server")
+async def resetpfpall(interaction: discord.Interaction):
+    if not is_bot_owner(interaction.user.id):
+        await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    success = 0
+    failed = []
+
+    for g in bot.guilds:
+        try:
+            await g.me.edit(avatar=None)
+            success += 1
+        except Exception as e:
+            failed.append(f"{g.name} (`{g.id}`): {e}")
+        await asyncio.sleep(1)  # stay well under Discord's rate limits across many guilds
+
+    msg = f"✅ Reset avatar back to default in **{success}/{len(bot.guilds)}** server(s)."
+    if failed:
+        shown = "\n".join(failed[:10])
+        msg += f"\n\n❌ Failed in:\n{shown}"
+        if len(failed) > 10:
+            msg += f"\n… and {len(failed) - 10} more"
+
+    await interaction.followup.send(msg)
 
 
 # --- START BOT ---
