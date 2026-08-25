@@ -156,6 +156,15 @@ def get_prefix(guild_id):
     return guild_prefixes.get(guild_id, "")
 
 
+# --- BOT OWNER CHECK (for privileged, cross-server commands) ---
+# Comma-separated Discord user IDs, e.g. "123456789012345678,987654321098765432"
+BOT_OWNER_IDS = {int(x) for x in os.getenv("BOT_OWNER_IDS", "").split(",") if x.strip().isdigit()}
+
+
+def is_bot_owner(user_id):
+    return user_id in BOT_OWNER_IDS
+
+
 def get_queue(guild_id):
     return queues.setdefault(guild_id, [])
 
@@ -206,12 +215,13 @@ def get_elapsed_seconds(guild_id):
     return max(0, elapsed)
 
 
-def build_progress_bar(elapsed, duration, length=18):
+def build_progress_bar(elapsed, duration, length=24):
     if not duration:
-        return "▬" * length
+        return "_"
     ratio = max(0, min(elapsed / duration, 1))
-    pos = int(ratio * (length - 1))
-    return "".join("🔘" if i == pos else "▬" for i in range(length))
+    filled = max(1, round(ratio * length))
+    empty = length - filled
+    return "_" * filled + "‾" * empty
 
 
 def mark_paused(guild_id):
@@ -242,6 +252,61 @@ def format_queue_names(guild_id, limit=8):
 
 def server_status():
     return f"✦ Casting {len(bot.guilds)} servers"
+
+
+async def update_bot_presence(title=None):
+    """Switches the bot's presence between the default status and a normal-
+    user-style 'Listening to <song>' status while something is playing.
+    Discord only allows one presence per bot process (not per server), so if
+    multiple servers are playing at once this reflects whichever song most
+    recently started."""
+    try:
+        if title:
+            activity = discord.Activity(type=discord.ActivityType.listening, name=title)
+        else:
+            activity = discord.Game(name=server_status())
+        await bot.change_presence(activity=activity)
+    except Exception as e:
+        print(f"[PRESENCE ERROR] {e}")
+
+
+# --- HOME-SERVER LOGGING ---
+# Point these at channels in your own "main" server. LOG_CHANNEL_ID is a
+# catch-all fallback — set the specific ones only if you want that category
+# split into its own channel; anything left unset falls back to it.
+LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
+JOIN_LOG_CHANNEL_ID = os.getenv("JOIN_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
+MUSIC_LOG_CHANNEL_ID = os.getenv("MUSIC_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
+ERROR_LOG_CHANNEL_ID = os.getenv("ERROR_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
+
+_log_channel_cache = {}
+
+
+async def get_log_channel(channel_id):
+    if not channel_id:
+        return None
+    channel_id = int(channel_id)
+    if channel_id in _log_channel_cache:
+        return _log_channel_cache[channel_id]
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception as e:
+            print(f"[LOG CHANNEL ERROR] Couldn't fetch {channel_id}: {e}")
+            return None
+    _log_channel_cache[channel_id] = channel
+    return channel
+
+
+async def send_log(channel_id, embed=None, text=None):
+    channel = await get_log_channel(channel_id)
+    if not channel:
+        return
+    try:
+        await channel.send(content=text, embed=embed)
+    except Exception as e:
+        print(f"[LOG SEND ERROR] {e}")
 
 
 # --- SHARED HTTP SESSION ---
@@ -493,7 +558,7 @@ async def resolve_query_items(query, requester):
     }]
 
 
-# --- LIVE "NOW PLAYING" REFRESH (updates the embed every 5 seconds) ---
+# --- LIVE "NOW PLAYING" REFRESH (updates the embed every 1 second) ---
 
 async def update_now_playing_message(guild_id):
     msg = now_playing_messages.get(guild_id)
@@ -506,14 +571,22 @@ async def update_now_playing_message(guild_id):
             embed=build_now_playing_embed(guild_id, paused=(vc.is_paused() if vc else False)),
             view=MusicView(guild_id)
         )
-    except (discord.NotFound, discord.HTTPException):
+    except discord.NotFound:
         now_playing_messages.pop(guild_id, None)
+    except discord.HTTPException as e:
+        # Rate limited (or a transient error) — just skip this tick, the next
+        # one will catch up. Discord edits are throttled around ~5 per 5s per
+        # channel, so at 1s intervals this will bite occasionally.
+        if getattr(e, "status", None) == 429:
+            print(f"[REFRESH RATE LIMITED] guild {guild_id}: retry_after={getattr(e, 'retry_after', '?')}")
+        else:
+            print(f"[REFRESH ERROR] {e}")
 
 
 async def now_playing_refresh_loop(guild_id):
     try:
         while current_song.get(guild_id):
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
             if current_song.get(guild_id):
                 await update_now_playing_message(guild_id)
     except asyncio.CancelledError:
@@ -577,7 +650,7 @@ def build_now_playing_embed(guild_id, paused=False):
     requester = song.get("requester")
     if requester:
         embed.set_footer(
-            text=f"🪄 cast by {requester.display_name} · updates every 5s",
+            text=f"🪄 cast by {requester.display_name} · updates every 1s",
             icon_url=requester.display_avatar.url
         )
 
@@ -805,6 +878,7 @@ async def stop_playback(guild, delete_message=None):
         except discord.HTTPException:
             pass
         await set_vc_status(channel_id, "")
+        await update_bot_presence()
 
     current_song.pop(guild_id, None)
     await delete_now_playing(guild_id)
@@ -838,6 +912,7 @@ async def play_next(guild, channel, send_func=None):
             except discord.HTTPException:
                 pass
             await set_vc_status(channel_id, "")
+            await update_bot_presence()
             return
         item = queue.pop(0)
         query = item["query"]
@@ -884,6 +959,10 @@ async def play_next(guild, channel, send_func=None):
                 text=f"😵‍💫 Couldn't cast **{query}** — skipping.\n`{error_detail}`",
                 view=add_support_button()
             )
+        asyncio.create_task(send_log(
+            ERROR_LOG_CHANNEL_ID,
+            text=f"⚠️ **Extraction failed** in **{guild.name}** (`{guild.id}`)\nQuery: `{query}`\nError: `{error_detail}`"
+        ))
         await play_next(guild, channel, send_func)
         return
 
@@ -933,11 +1012,19 @@ async def play_next(guild, channel, send_func=None):
                 )
             else:
                 await send_func(text=f"❌ Playback error.\n`ClientException: {error_detail}`", view=add_support_button())
+        asyncio.create_task(send_log(
+            ERROR_LOG_CHANNEL_ID,
+            text=f"🚨 **ClientException** in **{guild.name}** (`{guild.id}`) playing `{title}`: `{error_detail}`"
+        ))
         return
     except Exception as e:
         error_detail = str(e) if str(e) else type(e).__name__
         if send_func:
             await send_func(text=f"❌ Playback error.\n`{error_detail}`", view=add_support_button())
+        asyncio.create_task(send_log(
+            ERROR_LOG_CHANNEL_ID,
+            text=f"🚨 **Playback error** in **{guild.name}** (`{guild.id}`) playing `{title}`: `{error_detail}`"
+        ))
         return
 
     old_msg = now_playing_messages.get(guild_id)
@@ -948,6 +1035,19 @@ async def play_next(guild, channel, send_func=None):
             pass
 
     await set_vc_status(vc.channel.id, f"🎶 {title}"[:100])
+    await update_bot_presence(title=title)
+
+    log_embed = discord.Embed(
+        description=f"🎶 **{title}**\n[{webpage_url}]({webpage_url})" if webpage_url else f"🎶 **{title}**",
+        color=PURPLE
+    )
+    log_embed.add_field(name="Server", value=f"{guild.name} (`{guild.id}`)", inline=True)
+    log_embed.add_field(name="Voice Channel", value=vc.channel.name if vc.channel else "Unknown", inline=True)
+    if requester:
+        log_embed.add_field(name="Requested by", value=f"{requester} (`{requester.id}`)", inline=True)
+    if thumbnail:
+        log_embed.set_thumbnail(url=thumbnail)
+    asyncio.create_task(send_log(MUSIC_LOG_CHANNEL_ID, embed=log_embed))
 
     msg = await channel.send(embed=build_now_playing_embed(guild_id, paused=False), view=MusicView(guild_id))
     now_playing_messages[guild_id] = msg
@@ -1027,6 +1127,20 @@ async def on_guild_join(guild):
     except Exception:
         pass
 
+    embed = discord.Embed(
+        title="✦ Joined a New Server",
+        description=f"**{guild.name}**",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
+    embed.add_field(name="Members", value=str(guild.member_count), inline=True)
+    if guild.owner:
+        embed.add_field(name="Owner", value=f"{guild.owner} (`{guild.owner.id}`)", inline=True)
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(text=f"Now in {len(bot.guilds)} servers")
+    await send_log(JOIN_LOG_CHANNEL_ID, embed=embed)
+
 
 @bot.event
 async def on_guild_remove(guild):
@@ -1034,6 +1148,15 @@ async def on_guild_remove(guild):
         await bot.change_presence(activity=discord.Game(name=server_status()))
     except Exception:
         pass
+
+    embed = discord.Embed(
+        title="✦ Removed From a Server",
+        description=f"**{guild.name}**",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
+    embed.set_footer(text=f"Now in {len(bot.guilds)} servers")
+    await send_log(JOIN_LOG_CHANNEL_ID, embed=embed)
 
 
 @bot.event
@@ -1290,10 +1413,70 @@ async def stop(interaction: discord.Interaction):
     await interaction.followup.send(f"💨 The magic fades... stopped by {interaction.user.mention}")
 
 
+# --- OWNER-ONLY: CROSS-SERVER SUPPORT TOOLS ---
+
+@bot.tree.command(name="servers", description="(Bot owner only) List every server the bot is in")
+async def servers_command(interaction: discord.Interaction):
+    if not is_bot_owner(interaction.user.id):
+        await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+        return
+
+    lines = [f"**{g.name}** — `{g.id}` — {g.member_count} members" for g in bot.guilds]
+    text = "\n".join(lines) if lines else "Not in any servers."
+    if len(text) > 1900:
+        text = text[:1900] + "\n… (truncated)"
+    await interaction.response.send_message(text, ephemeral=True)
+
+
+@bot.tree.command(name="geninvite", description="(Bot owner only) Generate an invite link to any server the bot is in")
+async def geninvite(interaction: discord.Interaction, server_id: str):
+    if not is_bot_owner(interaction.user.id):
+        await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+        return
+
+    try:
+        target_id = int(server_id.strip())
+    except ValueError:
+        await interaction.response.send_message("❌ That's not a valid server ID.", ephemeral=True)
+        return
+
+    target_guild = bot.get_guild(target_id)
+    if not target_guild:
+        await interaction.response.send_message("❌ I'm not in a server with that ID. Use `/servers` to list them.", ephemeral=True)
+        return
+
+    invite_channel = None
+    for ch in target_guild.text_channels:
+        perms = ch.permissions_for(target_guild.me)
+        if perms.create_instant_invite and perms.view_channel:
+            invite_channel = ch
+            break
+
+    if not invite_channel:
+        await interaction.response.send_message(
+            f"❌ I don't have **Create Invite** permission in any channel of **{target_guild.name}**.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        invite = await invite_channel.create_invite(
+            max_age=3600, max_uses=1, unique=True,
+            reason=f"Requested by bot owner {interaction.user} ({interaction.user.id})"
+        )
+        await interaction.response.send_message(
+            f"🔗 Invite for **{target_guild.name}**: {invite.url}\n(expires in 1 hour, 1 use)",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Missing permission to create an invite there.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to create invite: `{e}`", ephemeral=True)
+
+
 # --- START BOT ---
 token = os.getenv("DISCORD_TOKEN")
 if token:
     bot.run(token)
 else:
     raise RuntimeError("DISCORD_TOKEN environment variable is missing!")
-
