@@ -276,9 +276,9 @@ async def update_bot_presence(title=None):
 # catch-all fallback — set the specific ones only if you want that category
 # split into its own channel; anything left unset falls back to it.
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID")
-JOIN_LOG_CHANNEL_ID = os.getenv("JOIN_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
-MUSIC_LOG_CHANNEL_ID = os.getenv("MUSIC_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
-ERROR_LOG_CHANNEL_ID = os.getenv("ERROR_LOG_CHANNEL_ID") or LOG_CHANNEL_ID
+JOIN_LOG_CHANNEL_ID = os.getenv("1541771639623000064") or LOG_CHANNEL_ID
+MUSIC_LOG_CHANNEL_ID = os.getenv("1541772103412613242") or LOG_CHANNEL_ID
+ERROR_LOG_CHANNEL_ID = os.getenv("1541772141236715530") or LOG_CHANNEL_ID
 
 _log_channel_cache = {}
 
