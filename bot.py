@@ -98,15 +98,15 @@ def add_support_button(view=None):
 CUSTOM_EMOJI_IDS = {
     # You provided one ID for resume.
     # It is also used for pause because no separate pause ID was provided.
-    "pause": 1541809172453261525,
-    "resume": 1541809172453261525,
+    "pause": None,
+    "resume": None,
 
-    "stop": 1541810640195420284,
-    "skip": 1541810644246986874,
-    "loop_off": 1541810690929463347,
-    "loop_track": 1541810690929463347,
-    "loop_queue": 1541810690929463347,
-    "shuffle": 1541810636151853236,
+    "stop": None,
+    "skip": None,
+    "loop_off": None,
+    "loop_track": None,
+    "loop_queue": None,
+    "shuffle": None,
 }
 
 
