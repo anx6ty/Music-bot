@@ -59,17 +59,17 @@ SUPPORT_SERVER_INVITE = "https://discord.gg/5ygnUWdG7D"
 # ============================================================
 
 CUSTOM_EMOJI_IDS = {
-    "resume": 1541809172453261525,
-    "stop": 1541810640195420284,
-    "skip": 1541810644246986874,
-    "loop": 1541810690929463347,
-    "shuffle": 1541810636151853236,
+    "resume": None,
+    "stop": None,
+    "skip": None,
+    "loop": None,
+    "shuffle": None,
 
     # Fallback/unused custom slots
     "pause": None,
-    "loop_off": 1541810690929463347,
-    "loop_track": 1541810690929463347,
-    "loop_queue": 1541810690929463347,
+    "loop_off": None,
+    "loop_track": None,
+    "loop_queue": None,
 }
 
 
