@@ -6,6 +6,7 @@ import re
 import time
 from urllib.parse import urlparse
 import aiohttp
+from aiohttp import BasicAuth
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -100,7 +101,7 @@ YTDL_OPTIONS = {
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            "player_client": ["android", "web", "tv", "ios"]
         }
     }
 }
@@ -109,6 +110,9 @@ if COOKIES_FILE and os.path.exists(COOKIES_FILE):
     print(f"[YT-DLP] Using cookies from {COOKIES_FILE}")
 else:
     print("[YT-DLP] No cookies file. YouTube may block requests.")
+    print("[YT-DLP] TIP: Set YOUTUBE_COOKIES_FILE env variable to a cookies.txt file")
+    print("[YT-DLP] TIP: You can export cookies from your browser using 'Get cookies.txt LOCALLY' extension")
+
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
     "options": "-vn"
@@ -131,14 +135,10 @@ guild_prefixes = {}
 mode_247 = {}
 last_track = {}
 log_channels = {"join": None, "music": None, "error": None}
-lock_spam_tasks = {}
-lock_spam_messages = {}
 CONFIG_FILE = os.getenv("CONFIG_FILE_PATH", "guild_config.json")
 QUEUE_NOTICE_BUTTON_TIMEOUT = 30
 QUEUE_NOTICE_DELETE_AFTER = 60
 NOW_PLAYING_REFRESH_SECONDS = 2
-LOCK_SPAM_CHANNEL_DELAY = 0.4
-LOCK_SPAM_ROUND_DELAY = 3.0
 
 # ============================================================
 # BOT OWNER IDS
@@ -230,6 +230,7 @@ async def get_spotify_token():
         return _spotify_token_cache["token"]
     try:
         session = await get_http_session()
+        # Fix: Use aiohttp.BasicAuth instead of deprecated auth parameter
         auth = aiohttp.BasicAuth(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET)
         async with session.post("https://accounts.spotify.com/api/token",
                                 data={"grant_type": "client_credentials"},
@@ -431,7 +432,29 @@ async def resolve_query_items(query, requester):
 async def resolve_youtube(query, requester, single=False):
     loop = asyncio.get_event_loop()
     extractor = ytdl_flat if is_playlist_url(query) else ytdl
-    data = await loop.run_in_executor(None, lambda: extractor.extract_info(query, download=False))
+    try:
+        data = await loop.run_in_executor(None, lambda: extractor.extract_info(query, download=False))
+    except Exception as e:
+        # Try alternate player clients if the first attempt fails
+        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
+            print(f"[YT-DLP] YouTube blocked request, trying alternate clients...")
+            # Modify options temporarily to try different player clients
+            original_clients = YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"]
+            YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = ["tv", "ios"]
+            ytdl_alt = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+            try:
+                data = await loop.run_in_executor(None, lambda: ytdl_alt.extract_info(query, download=False))
+                print(f"[YT-DLP] Success with alternate client!")
+            except Exception as e2:
+                # Restore original clients
+                YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = original_clients
+                ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+                raise RuntimeError(f"YouTube is blocking requests. Please set up cookies. Error: {e2}")
+            # Restore original clients
+            YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = original_clients
+            ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+        else:
+            raise
     if not data:
         raise RuntimeError("No result found.")
     if data.get("entries"):
@@ -795,7 +818,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         except Exception as e:
             error_detail = str(e)
             if "sign in" in error_detail.lower() or "cookies" in error_detail.lower():
-                hint = "\n\n💡 YouTube is blocking this request. Set `YOUTUBE_COOKIES_FILE`."
+                hint = "\n\n💡 YouTube is blocking this request. Please set up cookies. Contact the bot owner for help."
             else:
                 hint = ""
             if send_func:
@@ -860,7 +883,13 @@ async def enqueue_song(guild, channel, user, query, send_func):
     try:
         items = await resolve_query_items(query, user)
     except Exception as e:
-        return await send_func(text=f"😵‍💫 Couldn't add **{query}**.\n`{e}`", view=add_support_button())
+        error_msg = str(e)
+        if "Sign in to confirm" in error_msg or "cookies" in error_msg.lower():
+            return await send_func(
+                text=f"❌ YouTube is blocking requests. Please set up cookies for the bot.\n`{error_msg}`",
+                view=add_support_button()
+            )
+        return await send_func(text=f"😵‍💫 Couldn't add **{query}**.\n`{error_msg}`", view=add_support_button())
     was_playing = vc.is_playing() or vc.is_paused()
     for item in items:
         item.setdefault("query", query)
@@ -931,10 +960,9 @@ async def log_join(guild):
     embed.add_field(name="Members", value=str(guild.member_count), inline=True)
     if guild.owner:
         embed.add_field(name="Owner", value=f"{guild.owner.mention}\n{guild.owner.id}", inline=True)
-    embed.add_field(name="Server Link", value=f"Open Server", inline=False)
+    embed.set_footer(text=f"Now in {len(bot.guilds)} servers")
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
-    embed.set_footer(text=f"Now in {len(bot.guilds)} servers")
     await send_log("join", embed)
 
 async def log_leave(guild):
@@ -944,7 +972,6 @@ async def log_leave(guild):
         color=discord.Color.red()
     )
     embed.add_field(name="Server ID", value=f"{guild.id}", inline=True)
-    embed.add_field(name="Server", value=f"{guild.name}", inline=True)
     embed.set_footer(text=f"Now in {len(bot.guilds)} servers")
     await send_log("join", embed)
 
@@ -960,7 +987,7 @@ async def log_music(guild, channel, title, webpage_url=None, requester=None, thu
         color=PURPLE
     )
     if webpage_url:
-        embed.add_field(name="🔗 Track", value=f"Open Track", inline=False)
+        embed.add_field(name="🔗 Track", value=f"[Open Track]({webpage_url})", inline=False)
     if requester:
         embed.add_field(name="👤 Requested By", value=f"{requester.mention}\n{requester.id}", inline=True)
     if thumbnail:
@@ -1048,13 +1075,30 @@ async def on_message(message: discord.Message):
         if not command_text:
             # Bot was pinged with no command - show guide
             embed = discord.Embed(
-                title="🪄 Bot Guide",
+                title="🪄 **Jaduu Bot Guide**",
                 description="Here's how to use me:",
                 color=PURPLE
             )
-            embed.add_field(name="🎵 Music", value="`/play <song>` - Play a song\n`/skip` - Skip current song\n`/pause` - Pause\n`/resume` - Resume\n`/shuffle` - Shuffle queue", inline=False)
-            embed.add_field(name="📻 Premium Features", value="`/recommend` - Get music recommendations\n`/247` - Toggle 24/7 mode", inline=False)
-            embed.add_field(name="⚙️ Admin", value="`/config <prefix>` - Set server prefix\n`/setpfp` - Change bot avatar", inline=False)
+            embed.add_field(
+                name="🎵 **Music Commands**",
+                value="`/play <song>` - Play a song\n`/skip` - Skip current song\n`/pause` - Pause\n`/resume` - Resume\n`/shuffle` - Shuffle queue\n`/loop` - Loop mode",
+                inline=False
+            )
+            embed.add_field(
+                name="📻 **Premium Features**",
+                value="`/recommend` - Get music recommendations\n`/247` - Toggle 24/7 mode",
+                inline=False
+            )
+            embed.add_field(
+                name="⚙️ **Admin Commands**",
+                value="`/config <prefix>` - Set server prefix\n`/setpfp` - Change bot avatar\n`/resetpfp` - Reset bot avatar",
+                inline=False
+            )
+            embed.add_field(
+                name="💡 **Quick Tips**",
+                value="• Use `'play <song>` for quick play\n• Support Spotify and YouTube links\n• Playlists are supported",
+                inline=False
+            )
             embed.set_footer(text="✦ Casting spells with music ✦")
             await message.channel.send(embed=embed, view=add_support_button())
             return
@@ -1073,7 +1117,7 @@ async def on_message(message: discord.Message):
             if not arg:
                 # Show current button names/emojis
                 embed = discord.Embed(
-                    title="🎛️ Button Configuration",
+                    title="🎛️ **Button Configuration**",
                     description="Current button names and emojis:",
                     color=PURPLE
                 )
@@ -1086,10 +1130,13 @@ async def on_message(message: discord.Message):
                 }
                 for key, label in button_map.items():
                     embed.add_field(name=label, value=f"Emoji: {get_emoji(key)}", inline=True)
-                embed.add_field(name="How to Change", value=f"Use: `{prefix}buttons <button_name> <new_emoji>`\nExample: `{prefix}buttons pause 🎵`", inline=False)
+                embed.add_field(
+                    name="How to Change",
+                    value=f"Use: `{prefix}buttons <button_name> <new_emoji>`\nExample: `{prefix}buttons pause 🎵`\n\nValid buttons: pause, skip, shuffle, loop, stop",
+                    inline=False
+                )
                 await message.channel.send(embed=embed)
             else:
-                # Change button emoji
                 parts2 = arg.split(maxsplit=1)
                 if len(parts2) < 2:
                     await message.channel.send("❌ Usage: `buttons <button_name> <new_emoji>`")
@@ -1100,10 +1147,8 @@ async def on_message(message: discord.Message):
                 if btn_name not in valid_buttons:
                     await message.channel.send(f"❌ Invalid button. Choose from: {', '.join(valid_buttons)}")
                     return
-                # Store as unicode emoji
                 CUSTOM_EMOJI_IDS[btn_name] = None
                 _FALLBACK_EMOJI[btn_name] = new_emoji
-                # Update all now playing messages
                 for gid, msg in now_playing_messages.items():
                     try:
                         await msg.edit(view=MusicView(gid))
