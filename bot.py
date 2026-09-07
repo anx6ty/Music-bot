@@ -140,7 +140,7 @@ if not COOKIES_FILE and os.path.exists("cookies.txt"):
 
 # Optimized YT-DLP options for speed
 YTDL_OPTIONS = {
-    "format": "bestaudio[acodec=opus]/bestaudio/best",
+    "format": "bestaudio/best",
     "extractaudio": True,
     "audioformat": "mp3",
     "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
@@ -157,8 +157,8 @@ YTDL_OPTIONS = {
     # Speed optimizations
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"],  # faster than ios/tv
-            "skip": ["dash", "hls"]  # android client format IDs break when dash isn't skipped
+            "player_client": ["android", "web", "ios"],  # ios as fallback if android/web have no formats
+            "skip": ["dash", "hls"]
         }
     },
     "concurrent_fragment_downloads": 5,  # faster downloads
