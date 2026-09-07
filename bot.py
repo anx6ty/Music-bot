@@ -15,6 +15,13 @@ import yt_dlp
 # DISCORD.PY VERSION CHECK
 # ============================================================
 print(f"[DISCORD.PY] Version: {discord.__version__}")
+# NOTE: Components V2 (LayoutView / Container / Section / Thumbnail / Separator /
+# ActionRow) requires discord.py >= 2.6.0. If you're on an older version, run:
+#   pip install -U discord.py
+_dpy_major, _dpy_minor = (int(x) for x in discord.__version__.split(".")[:2])
+if (_dpy_major, _dpy_minor) < (2, 6):
+    print("[WARNING] discord.py < 2.6 detected — Components V2 (the new Now Playing "
+          "card) will NOT work. Please upgrade: pip install -U discord.py")
 
 # ============================================================
 # OPUS LOAD
@@ -133,7 +140,7 @@ if not COOKIES_FILE and os.path.exists("cookies.txt"):
 
 # Optimized YT-DLP options for speed
 YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio[acodec=opus]/bestaudio/best",
     "extractaudio": True,
     "audioformat": "mp3",
     "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
@@ -151,7 +158,7 @@ YTDL_OPTIONS = {
     "extractor_args": {
         "youtube": {
             "player_client": ["android", "web"],  # faster than ios/tv
-            "skip": ["dash", "hls"]  # avoid formats that need extra processing
+            "skip": ["hls"]  # keep dash formats - they usually carry the best opus audio
         }
     },
     "concurrent_fragment_downloads": 5,  # faster downloads
@@ -164,10 +171,10 @@ if COOKIES_FILE and os.path.exists(COOKIES_FILE):
 else:
     print("[YT-DLP] WARNING: No cookies! YouTube may block.")
 
-# FFmpeg options for speed
+# FFmpeg options tuned for stable, high-quality playback
 FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -loglevel error",
-    "options": "-vn -bufsize 512k"
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin -loglevel error",
+    "options": "-vn -b:a 192k -bufsize 2048k -ar 48000 -ac 2 -af aresample=async=1"
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
@@ -255,20 +262,77 @@ def mark_resumed(guild_id):
         song["paused_at"] = None
 
 # ============================================================
-# VIEWS (Buttons)
+# NOW PLAYING CARD (Components V2)
+# ------------------------------------------------------------
+# Replaces the old "Embed + separate button row" combo with a
+# single Container so the text, thumbnail AND buttons all sit
+# inside one visual card (same idea as the reference screenshot).
+# All buttons keep the exact same custom_id values as before, so
+# on_interaction() below doesn't need any routing changes.
 # ============================================================
-class MusicView(discord.ui.View):
+class MusicLayoutView(discord.ui.LayoutView):
     def __init__(self, guild_id):
         super().__init__(timeout=None)
         self.guild_id = guild_id
-        self.add_item(discord.ui.Button(label=get_emoji("pause"), style=discord.ButtonStyle.primary, custom_id="pause"))
-        self.add_item(discord.ui.Button(label=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"))
-        self.add_item(discord.ui.Button(label=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"))
-        self.add_item(discord.ui.Button(label=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"))
-        self.add_item(discord.ui.Button(label=get_emoji("stop"), style=discord.ButtonStyle.danger, custom_id="stop"))
-        self.add_item(discord.ui.Button(label=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"))
-        self.add_item(discord.ui.Button(label=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"))
-        self.add_item(discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+        song = current_song.get(guild_id)
+
+        container = discord.ui.Container(accent_color=PURPLE)
+
+        if not song:
+            container.add_item(discord.ui.TextDisplay(
+                "### ◈ Nothing Casting\n▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹\n"
+                "-# ✦ Queue a track with /play or &play"
+            ))
+        else:
+            elapsed = get_elapsed_seconds(guild_id)
+            duration_sec = song.get("duration_sec") or 0
+            bar = build_progress_bar(elapsed, duration_sec)
+            title = song["title"][:40]
+            url = song.get("webpage_url", "")
+            main_text = (
+                f"### [{title}]({url})\n"
+                f"{bar}\n"
+                f"`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`"
+            )
+
+            if song.get("thumbnail"):
+                section = discord.ui.Section(
+                    discord.ui.TextDisplay(main_text),
+                    accessory=discord.ui.Thumbnail(song["thumbnail"])
+                )
+                container.add_item(section)
+            else:
+                container.add_item(discord.ui.TextDisplay(main_text))
+
+            info_lines = [f"⏱️ `{song.get('duration_str', 'Unknown')}`   🔁 `{get_loop_label(guild_id)}`"]
+            qn = format_queue_names(guild_id, limit=3)
+            if qn != "empty":
+                info_lines.append(f"📃 **Next**\n{qn[:100]}")
+            container.add_item(discord.ui.TextDisplay("\n".join(info_lines)))
+
+            requester = song.get("requester")
+            if requester:
+                container.add_item(discord.ui.TextDisplay(f"-# 🪄 Added by {requester.mention}"))
+
+        container.add_item(discord.ui.Separator())
+
+        row1 = discord.ui.ActionRow(
+            discord.ui.Button(label=get_emoji("pause"), style=discord.ButtonStyle.primary, custom_id="pause"),
+            discord.ui.Button(label=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"),
+            discord.ui.Button(label=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"),
+            discord.ui.Button(label=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"),
+        )
+        row2 = discord.ui.ActionRow(
+            discord.ui.Button(label=get_emoji("stop"), style=discord.ButtonStyle.danger, custom_id="stop"),
+            discord.ui.Button(label=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"),
+            discord.ui.Button(label=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"),
+            discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE),
+        )
+        container.add_item(row1)
+        container.add_item(row2)
+
+        self.add_item(container)
+
 
 class JoinLogView(discord.ui.View):
     def __init__(self, guild_id):
@@ -295,34 +359,6 @@ class LeaveConfirmView(discord.ui.View):
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel_leave(self, interaction, button):
         await interaction.response.send_message("❌ Cancelled.", ephemeral=True)
-
-# ============================================================
-# EMBED BUILDER
-# ============================================================
-def build_now_playing_embed(guild_id, paused=False):
-    song = current_song.get(guild_id)
-    if not song:
-        embed = discord.Embed(description="### ◈ Nothing Casting\n▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹", color=PURPLE)
-        embed.set_footer(text="✦ Queue a track with /play or &play")
-        return embed
-    elapsed = get_elapsed_seconds(guild_id)
-    duration_sec = song.get("duration_sec") or 0
-    bar = build_progress_bar(elapsed, duration_sec)
-    embed = discord.Embed(
-        description=f"### [{song['title'][:40]}]({song.get('webpage_url', '')})\n{bar}\n`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`",
-        color=PURPLE
-    )
-    if song.get("thumbnail"):
-        embed.set_thumbnail(url=song["thumbnail"])
-    embed.add_field(name="⏱️", value=f"`{song.get('duration_str', 'Unknown')}`", inline=True)
-    embed.add_field(name="🔁", value=f"`{get_loop_label(guild_id)}`", inline=True)
-    qn = format_queue_names(guild_id, limit=3)
-    if qn != "empty":
-        embed.add_field(name="📃 Next", value=qn[:100], inline=False)
-    requester = song.get("requester")
-    if requester:
-        embed.set_footer(text=f"🪄 {requester.display_name}", icon_url=requester.display_avatar.url)
-    return embed
 
 # ============================================================
 # PLAYBACK FUNCTIONS
@@ -376,9 +412,8 @@ async def update_now_playing_message(guild_id):
         return None
     guild = bot.get_guild(guild_id)
     if not guild: return None
-    vc = guild.voice_client
     try:
-        await msg.edit(embed=build_now_playing_embed(guild_id, paused=vc.is_paused() if vc else False), view=MusicView(guild_id))
+        await msg.edit(view=MusicLayoutView(guild_id))
         return None
     except discord.NotFound:
         now_playing_messages.pop(guild_id, None)
@@ -503,7 +538,10 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         asyncio.run_coroutine_threadsafe(play_next(guild, channel), bot.loop)
 
     try:
-        source = discord.FFmpegPCMAudio(song_url, **FFMPEG_OPTIONS)
+        # FFmpegOpusAudio sends already-Opus-encoded audio straight to Discord,
+        # skipping the PCM->Opus re-encode step that FFmpegPCMAudio forces.
+        # This is the single biggest fix for stuttering/choppy playback.
+        source = discord.FFmpegOpusAudio(song_url, **FFMPEG_OPTIONS)
         vc.play(source, after=after_play)
     except Exception as e:
         if send_func:
@@ -515,7 +553,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         try: await old.delete()
         except: pass
     await update_bot_presence()
-    msg = await channel.send(embed=build_now_playing_embed(guild_id, paused=False), view=MusicView(guild_id))
+    msg = await channel.send(view=MusicLayoutView(guild_id))
     now_playing_messages[guild_id] = msg
     start_now_playing_refresh(guild_id)
 
@@ -654,12 +692,12 @@ async def on_interaction(interaction: discord.Interaction):
             if vc.is_paused():
                 vc.resume()
                 mark_resumed(guild_id)
-                await interaction.response.edit_message(embed=build_now_playing_embed(guild_id, paused=False), view=MusicView(guild_id))
+                await interaction.response.edit_message(view=MusicLayoutView(guild_id))
                 await interaction.followup.send(f"▶️ Resumed by {interaction.user.mention}")
             else:
                 vc.pause()
                 mark_paused(guild_id)
-                await interaction.response.edit_message(embed=build_now_playing_embed(guild_id, paused=True), view=MusicView(guild_id))
+                await interaction.response.edit_message(view=MusicLayoutView(guild_id))
                 await interaction.followup.send(f"⏸️ Paused by {interaction.user.mention}")
         elif custom_id == "skip":
             if vc and (vc.is_playing() or vc.is_paused()):
@@ -676,7 +714,7 @@ async def on_interaction(interaction: discord.Interaction):
             await update_now_playing_message(guild_id)
         elif custom_id == "loop":
             loop_modes[guild_id] = next_loop_mode(loop_modes.get(guild_id))
-            await interaction.response.edit_message(embed=build_now_playing_embed(guild_id, paused=vc.is_paused() if vc else False), view=MusicView(guild_id))
+            await interaction.response.edit_message(view=MusicLayoutView(guild_id))
         elif custom_id == "stop":
             await interaction.response.defer()
             await stop_playback(guild, delete_message=interaction.message)
@@ -854,7 +892,7 @@ async def on_message(message: discord.Message):
         song = current_song.get(message.guild.id)
         if not song:
             return await message.channel.send("❌ Nothing playing.")
-        await message.channel.send(embed=build_now_playing_embed(message.guild.id), view=MusicView(message.guild.id))
+        await message.channel.send(view=MusicLayoutView(message.guild.id))
         return
 
     if cmd == "queue":
@@ -1022,3 +1060,4 @@ token = os.getenv("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN not set.")
 bot.run(token)
+
