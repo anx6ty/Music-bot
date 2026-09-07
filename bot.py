@@ -15,9 +15,6 @@ import yt_dlp
 # DISCORD.PY VERSION CHECK
 # ============================================================
 print(f"[DISCORD.PY] Version: {discord.__version__}")
-# NOTE: Components V2 (LayoutView / Container / Section / Thumbnail / Separator /
-# ActionRow) requires discord.py >= 2.6.0. If you're on an older version, run:
-#   pip install -U discord.py
 _dpy_major, _dpy_minor = (int(x) for x in discord.__version__.split(".")[:2])
 if (_dpy_major, _dpy_minor) < (2, 6):
     print("[WARNING] discord.py < 2.6 detected — Components V2 (the new Now Playing "
@@ -55,17 +52,40 @@ DEFAULT_PREFIX = "&"
 # CUSTOM EMOJIS (fallback)
 # ============================================================
 _FALLBACK_EMOJI = {
-    "pause": "⏸️", "resume": "▶️", "skip": "⏭️", "shuffle": "🔀",
-    "loop": "🔁", "loop_off": "🔁", "loop_track": "🔂", "loop_queue": "🔁",
-    "stop": "⏹️", "support": "🛟", "lyrics": "📝", "queue": "📃",
-    "volume": "🔊", "repeat": "🔂", "autoplay": "🎯", "geninvite": "🔗", "leave": "🚪"
+    "pause": "⏸️",
+    "resume": "▶️",
+    "skip": "⏭️",
+    "shuffle": "🔀",
+    "loop": "🔁",
+    "loop_off": "🔁",
+    "loop_track": "🔂",
+    "loop_queue": "🔁",
+    "stop": "⏹️",
+    "support": "🛟",
+    "lyrics": "📝",
+    "queue": "📃",
+    "volume": "🔊",
+    "repeat": "🔂",
+    "autoplay": "🎯",
+    "geninvite": "🔗",
+    "leave": "🚪"
 }
 
 BUTTON_NAMES = {
-    "pause": "Pause", "skip": "Skip", "shuffle": "Shuffle", "loop": "Loop",
-    "stop": "Stop", "resume": "Resume", "support": "Support", "lyrics": "Lyrics",
-    "queue": "Queue", "volume": "Volume", "repeat": "Repeat", "autoplay": "Autoplay",
-    "geninvite": "GenInvite", "leave": "Leave"
+    "pause": "Pause",
+    "skip": "Skip",
+    "shuffle": "Shuffle",
+    "loop": "Loop",
+    "stop": "Stop",
+    "resume": "Resume",
+    "support": "Support",
+    "lyrics": "Lyrics",
+    "queue": "Queue",
+    "volume": "Volume",
+    "repeat": "Repeat",
+    "autoplay": "Autoplay",
+    "geninvite": "GenInvite",
+    "leave": "Leave"
 }
 
 def get_emoji(key):
@@ -84,12 +104,12 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        guild_prefixes = {int(k): v for k, v in data.get("prefixes", {}).items()}
-        log_channels = data.get("log_channels", {"join": None, "music": None, "error": None})
-        saved_buttons = data.get("buttons", {})
-        for k, v in saved_buttons.items():
-            if k in _FALLBACK_EMOJI:
-                _FALLBACK_EMOJI[k] = v
+            guild_prefixes = {int(k): v for k, v in data.get("prefixes", {}).items()}
+            log_channels = data.get("log_channels", {"join": None, "music": None, "error": None})
+            saved_buttons = data.get("buttons", {})
+            for k, v in saved_buttons.items():
+                if k in _FALLBACK_EMOJI:
+                    _FALLBACK_EMOJI[k] = v
     except:
         guild_prefixes = {}
         log_channels = {"join": None, "music": None, "error": None}
@@ -118,27 +138,23 @@ COOKIE_CONTENT = os.getenv("YOUTUBE_COOKIE_CONTENT")
 COOKIE_FILE_PATH = os.getenv("YOUTUBE_COOKIE_FILE", "")
 COOKIES_FILE = None
 
-# Try env var first
 if COOKIE_CONTENT:
     try:
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
             f.write(COOKIE_CONTENT)
             COOKIES_FILE = f.name
-        print("[YT-DLP] Using cookies from environment variable")
+            print("[YT-DLP] Using cookies from environment variable")
     except Exception as e:
         print(f"[YT-DLP] Error with env cookie: {e}")
 
-# Then try file path
 if not COOKIES_FILE and COOKIE_FILE_PATH and os.path.exists(COOKIE_FILE_PATH):
     COOKIES_FILE = COOKIE_FILE_PATH
     print(f"[YT-DLP] Using cookies file: {COOKIES_FILE}")
 
-# Then try local file
 if not COOKIES_FILE and os.path.exists("cookies.txt"):
     COOKIES_FILE = "cookies.txt"
     print("[YT-DLP] Using local cookies.txt")
 
-# Optimized YT-DLP options for speed
 YTDL_OPTIONS = {
     "format": "bestaudio/best",
     "extractaudio": True,
@@ -154,15 +170,12 @@ YTDL_OPTIONS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # Speed optimizations
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web", "ios"],  # ios as fallback if android/web have no formats
-            "skip": ["dash", "hls"]
+            "player_client": ["android", "web", "ios"]   # skip dash/hls removed to fix format error
         }
     },
-    "concurrent_fragment_downloads": 5,  # faster downloads
-    "throttledratelimit": 100000000,      # no throttle
+    "concurrent_fragment_downloads": 5,
 }
 
 if COOKIES_FILE and os.path.exists(COOKIES_FILE):
@@ -171,7 +184,6 @@ if COOKIES_FILE and os.path.exists(COOKIES_FILE):
 else:
     print("[YT-DLP] WARNING: No cookies! YouTube may block.")
 
-# FFmpeg options tuned for stable, high-quality playback
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin -loglevel error",
     "options": "-vn -b:a 192k -bufsize 2048k -ar 48000 -ac 2 -af aresample=async=1"
@@ -188,6 +200,7 @@ loop_modes = {}
 now_playing_messages = {}
 progress_tasks = {}
 mode_247 = {}
+
 QUEUE_NOTICE_BUTTON_TIMEOUT = 30
 QUEUE_NOTICE_DELETE_AFTER = 60
 NOW_PLAYING_REFRESH_SECONDS = 2
@@ -196,6 +209,7 @@ NOW_PLAYING_REFRESH_SECONDS = 2
 # BOT OWNER
 # ============================================================
 BOT_OWNER_IDS = {int(x) for x in os.getenv("BOT_OWNER_IDS", "").split(",") if x.strip().isdigit()}
+
 def is_bot_owner(user_id):
     return user_id in BOT_OWNER_IDS
 
@@ -212,8 +226,10 @@ def get_queue(guild_id):
     return queues.setdefault(guild_id, [])
 
 def next_loop_mode(current):
-    if current is None: return "track"
-    if current == "track": return "queue"
+    if current is None:
+        return "track"
+    if current == "track":
+        return "queue"
     return None
 
 def get_loop_label(guild_id):
@@ -222,7 +238,8 @@ def get_loop_label(guild_id):
 
 def format_queue_names(guild_id, limit=3):
     q = get_queue(guild_id)
-    if not q: return "empty"
+    if not q:
+        return "empty"
     lines = []
     for i, item in enumerate(q[:limit], 1):
         title = item.get("title") or item.get("query") or "Unknown"
@@ -233,7 +250,8 @@ def format_queue_names(guild_id, limit=3):
 
 def get_elapsed_seconds(guild_id):
     song = current_song.get(guild_id)
-    if not song: return 0
+    if not song:
+        return 0
     now = time.time()
     elapsed = now - song.get("start_time", now) - song.get("paused_total", 0.0)
     if song.get("paused_at"):
@@ -242,13 +260,6 @@ def get_elapsed_seconds(guild_id):
     if duration:
         return max(0, min(elapsed, duration))
     return max(0, elapsed)
-
-def build_progress_bar(elapsed, duration, length=12):
-    if not duration: return "●"
-    ratio = max(0, min(elapsed / duration, 1))
-    filled = max(1, round(ratio * length))
-    empty = length - filled
-    return "●" * filled + "○" * empty
 
 def mark_paused(guild_id):
     song = current_song.get(guild_id)
@@ -263,36 +274,33 @@ def mark_resumed(guild_id):
 
 # ============================================================
 # NOW PLAYING CARD (Components V2)
-# ------------------------------------------------------------
-# Replaces the old "Embed + separate button row" combo with a
-# single Container so the text, thumbnail AND buttons all sit
-# inside one visual card (same idea as the reference screenshot).
-# All buttons keep the exact same custom_id values as before, so
-# on_interaction() below doesn't need any routing changes.
 # ============================================================
 class MusicLayoutView(discord.ui.LayoutView):
     def __init__(self, guild_id):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         song = current_song.get(guild_id)
-
         container = discord.ui.Container(accent_color=PURPLE)
 
         if not song:
             container.add_item(discord.ui.TextDisplay(
-                "### ◈ Nothing Casting\n▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹\n"
+                "### ◈ Nothing Casting\n"
+                "▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹\n"
                 "-# ✦ Queue a track with /play or &play"
             ))
         else:
             elapsed = get_elapsed_seconds(guild_id)
             duration_sec = song.get("duration_sec") or 0
-            bar = build_progress_bar(elapsed, duration_sec)
             title = song["title"][:40]
             url = song.get("webpage_url", "")
+
+            # Simple time display instead of progress bar
+            time_str = f"`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`"
+
             main_text = (
                 f"### [{title}]({url})\n"
-                f"{bar}\n"
-                f"`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`"
+                f"{time_str}\n"
+                f"⏱️ `{song.get('duration_str', 'Unknown')}` 🔁 `{get_loop_label(guild_id)}`"
             )
 
             if song.get("thumbnail"):
@@ -304,35 +312,32 @@ class MusicLayoutView(discord.ui.LayoutView):
             else:
                 container.add_item(discord.ui.TextDisplay(main_text))
 
-            info_lines = [f"⏱️ `{song.get('duration_str', 'Unknown')}`   🔁 `{get_loop_label(guild_id)}`"]
             qn = format_queue_names(guild_id, limit=3)
             if qn != "empty":
-                info_lines.append(f"📃 **Next**\n{qn[:100]}")
-            container.add_item(discord.ui.TextDisplay("\n".join(info_lines)))
+                container.add_item(discord.ui.TextDisplay(f"📃 **Next**\n{qn[:100]}"))
 
             requester = song.get("requester")
             if requester:
                 container.add_item(discord.ui.TextDisplay(f"-# 🪄 Added by {requester.mention}"))
 
-        container.add_item(discord.ui.Separator())
+            container.add_item(discord.ui.Separator())
 
-        row1 = discord.ui.ActionRow(
-            discord.ui.Button(label=get_emoji("pause"), style=discord.ButtonStyle.primary, custom_id="pause"),
-            discord.ui.Button(label=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"),
-            discord.ui.Button(label=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"),
-            discord.ui.Button(label=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"),
-        )
-        row2 = discord.ui.ActionRow(
-            discord.ui.Button(label=get_emoji("stop"), style=discord.ButtonStyle.danger, custom_id="stop"),
-            discord.ui.Button(label=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"),
-            discord.ui.Button(label=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"),
-            discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE),
-        )
-        container.add_item(row1)
-        container.add_item(row2)
+            row1 = discord.ui.ActionRow(
+                discord.ui.Button(label=get_emoji("pause"), style=discord.ButtonStyle.primary, custom_id="pause"),
+                discord.ui.Button(label=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"),
+                discord.ui.Button(label=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"),
+                discord.ui.Button(label=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"),
+            )
+            row2 = discord.ui.ActionRow(
+                discord.ui.Button(label=get_emoji("stop"), style=discord.ButtonStyle.danger, custom_id="stop"),
+                discord.ui.Button(label=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"),
+                discord.ui.Button(label=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"),
+                discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE),
+            )
+            container.add_item(row1)
+            container.add_item(row2)
 
         self.add_item(container)
-
 
 class JoinLogView(discord.ui.View):
     def __init__(self, guild_id):
@@ -346,6 +351,7 @@ class LeaveConfirmView(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=30)
         self.guild_id = guild_id
+
     @discord.ui.button(label="Yes, Leave Server", style=discord.ButtonStyle.danger, emoji="🚪")
     async def confirm_leave(self, interaction, button):
         if not is_bot_owner(interaction.user.id):
@@ -356,6 +362,7 @@ class LeaveConfirmView(discord.ui.View):
         await interaction.response.send_message(f"👋 Leaving **{guild.name}**...", ephemeral=True)
         await guild.leave()
         await interaction.edit_original_response(content=f"✅ Left **{guild.name}**")
+
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel_leave(self, interaction, button):
         await interaction.response.send_message("❌ Cancelled.", ephemeral=True)
@@ -388,8 +395,10 @@ async def stop_playback(guild, delete_message=None):
     await delete_now_playing(guild_id)
     await update_bot_presence()
     if delete_message:
-        try: await delete_message.delete()
-        except: pass
+        try:
+            await delete_message.delete()
+        except:
+            pass
 
 async def delete_now_playing(guild_id):
     task = progress_tasks.pop(guild_id, None)
@@ -397,8 +406,10 @@ async def delete_now_playing(guild_id):
         task.cancel()
     msg = now_playing_messages.pop(guild_id, None)
     if msg:
-        try: await msg.delete()
-        except: pass
+        try:
+            await msg.delete()
+        except:
+            pass
 
 async def update_bot_presence():
     try:
@@ -411,7 +422,8 @@ async def update_now_playing_message(guild_id):
     if not msg or not current_song.get(guild_id):
         return None
     guild = bot.get_guild(guild_id)
-    if not guild: return None
+    if not guild:
+        return None
     try:
         await msg.edit(view=MusicLayoutView(guild_id))
         return None
@@ -462,8 +474,10 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         if not q:
             current_song.pop(guild_id, None)
             await delete_now_playing(guild_id)
-            try: await vc.disconnect()
-            except: pass
+            try:
+                await vc.disconnect()
+            except:
+                pass
             await update_bot_presence()
             return
         item = q.pop(0)
@@ -472,6 +486,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         song_data = item
 
     loop = asyncio.get_event_loop()
+
     if song_data and song_data.get("stream_url"):
         song_url = song_data["stream_url"]
         title = song_data.get("title", "Unknown Track")
@@ -538,9 +553,6 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         asyncio.run_coroutine_threadsafe(play_next(guild, channel), bot.loop)
 
     try:
-        # FFmpegOpusAudio sends already-Opus-encoded audio straight to Discord,
-        # skipping the PCM->Opus re-encode step that FFmpegPCMAudio forces.
-        # This is the single biggest fix for stuttering/choppy playback.
         source = discord.FFmpegOpusAudio(song_url, **FFMPEG_OPTIONS)
         vc.play(source, after=after_play)
     except Exception as e:
@@ -550,8 +562,10 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
 
     old = now_playing_messages.get(guild_id)
     if old:
-        try: await old.delete()
-        except: pass
+        try:
+            await old.delete()
+        except:
+            pass
     await update_bot_presence()
     msg = await channel.send(view=MusicLayoutView(guild_id))
     now_playing_messages[guild_id] = msg
@@ -561,17 +575,16 @@ async def enqueue_song(guild, channel, user, query, send_func):
     vc, err = await ensure_voice(user, guild)
     if err:
         return await send_func(text=err)
+
     try:
         items = await asyncio.get_event_loop().run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
         if not items:
             raise RuntimeError("No results")
-        # Normalize to list
         if not isinstance(items, list):
             if items.get("entries"):
                 items = [e for e in items["entries"] if e]
             else:
                 items = [items]
-        # Build track list
         track_list = []
         for data in items:
             if not data:
@@ -741,20 +754,20 @@ async def on_interaction(interaction: discord.Interaction):
 async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
+
     content = message.content.strip()
     lowered = content.lower()
     prefix = get_prefix(message.guild.id)
 
-    # Ping = guide (public)
     if bot.user in message.mentions:
         txt = content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         if not txt:
             embed = discord.Embed(
                 description=f"## 🪄 **Jaduu Bot Guide**\n"
-                           f"### 🎵 **Music**\n"
-                           f"`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
-                           f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
-                           f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
+                            f"### 🎵 **Music**\n"
+                            f"`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
+                            f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
+                            f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
                 color=PURPLE
             )
             embed.set_footer(text="✦ Casting spells with music ✦")
@@ -770,7 +783,6 @@ async def on_message(message: discord.Message):
     cmd = lowered[len(prefix):].strip().split()[0].lower() if len(lowered) > len(prefix) else ""
     arg = (lowered[len(prefix):].strip() + " ").split(maxsplit=1)[1].strip() if " " in lowered[len(prefix):] else ""
 
-    # Owner-only commands
     if cmd == "owneronly":
         if not is_bot_owner(message.author.id):
             return await message.channel.send("❌ Only owner.")
@@ -778,7 +790,7 @@ async def on_message(message: discord.Message):
             title="🔐 Owner Commands",
             description=f"**{prefix}buttons** – customize button emojis\n"
                         f"**{prefix}geninvite <server_id>** – generate invite\n"
-                        f"**{prefix}setlog <join/music/error> <#channel>**\n"
+                        f"**{prefix}setlog <type> <channel>**\n"
                         f"**{prefix}prefix <new>** – server prefix (admin too)\n"
                         f"**{prefix}owneronly** – this menu\n"
                         f"**/setpfp**, **/resetpfp** (admin)",
@@ -847,7 +859,7 @@ async def on_message(message: discord.Message):
             return await message.channel.send("❌ Only owner.")
         parts = arg.split(maxsplit=1)
         if len(parts) < 2:
-            return await message.channel.send(f"❌ Usage: `{prefix}setlog <join/music/error> <#channel>`")
+            return await message.channel.send(f"❌ Usage: `{prefix}setlog <type> <channel>`")
         typ, chan = parts[0].lower(), parts[1].strip()
         if typ not in ("join","music","error"):
             return await message.channel.send("❌ Invalid type. Use join/music/error.")
@@ -863,7 +875,7 @@ async def on_message(message: discord.Message):
         if not (message.author.guild_permissions.administrator or is_bot_owner(message.author.id)):
             return await message.channel.send("❌ Admin permission required.")
         if not arg:
-            return await message.channel.send(f"❌ Usage: `{prefix}prefix <new>`")
+            return await message.channel.send(f"❌ Usage: `{prefix}prefix <new_prefix>`")
         newp = arg.strip()
         if len(newp) > 5 or " " in newp:
             return await message.channel.send("❌ Prefix 1-5 chars, no spaces.")
@@ -872,13 +884,12 @@ async def on_message(message: discord.Message):
         await message.channel.send(f"✅ Prefix changed to `{newp}`")
         return
 
-    # Public commands
     if cmd in ("help", "h"):
         embed = discord.Embed(
             description=f"## 🪄 **Jaduu Bot Commands**\n"
-                       f"### 🎵 **Music**\n`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
-                       f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
-                       f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
+                        f"### 🎵 **Music**\n`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
+                        f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
+                        f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
             color=PURPLE
         )
         embed.set_footer(text="✦ Casting spells")
@@ -908,8 +919,7 @@ async def on_message(message: discord.Message):
     if cmd in ("p", "play"):
         if not arg:
             return await message.channel.send("❌ Give a song.")
-        await enqueue_song(message.guild, message.channel, message.author, arg,
-                           lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view))
+        await enqueue_song(message.guild, message.channel, message.author, arg, lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view))
         return
 
     if cmd == "skip":
@@ -970,9 +980,10 @@ async def on_message(message: discord.Message):
 def parse_channel_arg(guild, arg):
     if not arg:
         return None
-    match = re.match(r"<#(\d+)>", arg.strip().split()[0])
-    if match:
-        cid = int(match.group(1))
+    # Extract channel ID from mention or raw ID
+    mention_match = re.match(r"<#(\d+)>", arg.strip())
+    if mention_match:
+        cid = int(mention_match.group(1))
     else:
         try:
             cid = int(arg.strip().split()[0])
@@ -1060,4 +1071,3 @@ token = os.getenv("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN not set.")
 bot.run(token)
-
