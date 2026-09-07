@@ -170,8 +170,15 @@ YTDL_OPTIONS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # NOTE: extractor_args hata diya gaya hai – default player client use hoga, jo sabse stable hai.
-    # Agar phir bhi issue aaye toh upar wale steps se cookies add karo.
+    # FIX: YouTube ka default "web"/"tv_downgraded" player client abhi buggy hai,
+    # isliye "Video unavailable" / "The page needs to be reloaded" errors aa rahe the.
+    # Yeh line yt-dlp ko android -> web_embedded -> web client try karne bolti hai,
+    # jisse extraction fail nahi hota.
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web_embedded", "web"],
+        }
+    },
     "concurrent_fragment_downloads": 5,
 }
 
@@ -1067,3 +1074,4 @@ token = os.getenv("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN not set.")
 bot.run(token)
+
