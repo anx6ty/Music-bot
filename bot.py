@@ -170,11 +170,8 @@ YTDL_OPTIONS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web", "ios"]   # skip dash/hls removed to fix format error
-        }
-    },
+    # NOTE: extractor_args hata diya gaya hai – default player client use hoga, jo sabse stable hai.
+    # Agar phir bhi issue aaye toh upar wale steps se cookies add karo.
     "concurrent_fragment_downloads": 5,
 }
 
@@ -980,7 +977,6 @@ async def on_message(message: discord.Message):
 def parse_channel_arg(guild, arg):
     if not arg:
         return None
-    # Extract channel ID from mention or raw ID
     mention_match = re.match(r"<#(\d+)>", arg.strip())
     if mention_match:
         cid = int(mention_match.group(1))
