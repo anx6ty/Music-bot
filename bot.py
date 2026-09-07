@@ -158,7 +158,7 @@ YTDL_OPTIONS = {
     "extractor_args": {
         "youtube": {
             "player_client": ["android", "web"],  # faster than ios/tv
-            "skip": ["hls"]  # keep dash formats - they usually carry the best opus audio
+            "skip": ["dash", "hls"]  # android client format IDs break when dash isn't skipped
         }
     },
     "concurrent_fragment_downloads": 5,  # faster downloads
