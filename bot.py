@@ -40,7 +40,7 @@ intents.message_content = True
 intents.guilds = True
 intents.voice_states = True
 intents.members = True
-bot = commands.Bot(command_prefix="&", intents=intents)  # ✅ Default prefix & 
+bot = commands.Bot(command_prefix="&", intents=intents)
 PURPLE = discord.Color.from_rgb(155, 93, 229)
 SUPPORT_SERVER_INVITE = "https://discord.gg/5ygnUWdG7D"
 DEFAULT_PREFIX = "&"
@@ -322,7 +322,7 @@ def mark_resumed(guild_id):
         song["paused_at"] = None
 
 # ============================================================
-# BUTTONS INSIDE EMBED - USING COMPONENTS
+# MUSIC VIEW
 # ============================================================
 class MusicView(discord.ui.View):
     def __init__(self, guild_id):
@@ -397,7 +397,34 @@ class JoinLogView(discord.ui.View):
         ))
 
 # ============================================================
-# EMBED WITH BUTTONS INSIDE
+# LEAVE CONFIRM VIEW
+# ============================================================
+class LeaveConfirmView(discord.ui.View):
+    def __init__(self, guild_id):
+        super().__init__(timeout=30)
+        self.guild_id = guild_id
+    
+    @discord.ui.button(label="Yes, Leave Server", style=discord.ButtonStyle.danger, emoji="🚪")
+    async def confirm_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_bot_owner(interaction.user.id):
+            await interaction.response.send_message("❌ Only bot owner can do this.", ephemeral=True)
+            return
+        
+        guild = bot.get_guild(self.guild_id)
+        if not guild:
+            await interaction.response.send_message("❌ Server not found.", ephemeral=True)
+            return
+        
+        await interaction.response.send_message(f"👋 Leaving **{guild.name}**...", ephemeral=True)
+        await guild.leave()
+        await interaction.edit_original_response(content=f"✅ Left **{guild.name}**")
+    
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Cancelled.", ephemeral=True)
+
+# ============================================================
+# NOW PLAYING EMBED
 # ============================================================
 def build_now_playing_embed(guild_id, paused=False):
     song = current_song.get(guild_id)
@@ -443,7 +470,10 @@ async def ensure_voice(user, guild):
     voice_channel = user.voice.channel
     vc = guild.voice_client
     if not vc:
-        vc = await voice_channel.connect(self_deaf=True, self_mute=False)
+        try:
+            vc = await voice_channel.connect(self_deaf=True, self_mute=False)
+        except Exception as e:
+            return None, f"❌ Failed to connect: {e}"
     elif vc.channel != voice_channel:
         await vc.move_to(voice_channel)
     return vc, None
@@ -714,33 +744,6 @@ async def log_leave(guild):
     await send_log("join", embed)
 
 # ============================================================
-# LEAVE CONFIRM VIEW
-# ============================================================
-class LeaveConfirmView(discord.ui.View):
-    def __init__(self, guild_id):
-        super().__init__(timeout=30)
-        self.guild_id = guild_id
-    
-    @discord.ui.button(label="Yes, Leave Server", style=discord.ButtonStyle.danger, emoji="🚪")
-    async def confirm_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_bot_owner(interaction.user.id):
-            await interaction.response.send_message("❌ Only bot owner can do this.", ephemeral=True)
-            return
-        
-        guild = bot.get_guild(self.guild_id)
-        if not guild:
-            await interaction.response.send_message("❌ Server not found.", ephemeral=True)
-            return
-        
-        await interaction.response.send_message(f"👋 Leaving **{guild.name}**...", ephemeral=True)
-        await guild.leave()
-        await interaction.edit_original_response(content=f"✅ Left **{guild.name}**")
-    
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
-    async def cancel_leave(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Cancelled.", ephemeral=True)
-
-# ============================================================
 # BUTTON INTERACTIONS
 # ============================================================
 @bot.event
@@ -958,11 +961,11 @@ async def on_message(message: discord.Message):
                 description=f"**{prefix}buttons** - Customize button emojis\n"
                            f"**{prefix}geninvite <server_id>** - Generate server invite\n"
                            f"**{prefix}setlog <join/music/error> <#channel>** - Set log channel\n"
-                           f"**{prefix}config <prefix>** - Change bot prefix\n"
+                           f"**{prefix}prefix <new_prefix>** - Change server prefix\n"
                            f"**{prefix}owneronly** - Show this menu\n"
                            f"\n**Slash Commands:**\n"
-                           f"**/setpfp** - Change bot avatar\n"
-                           f"**/resetpfp** - Reset bot avatar",
+                           f"**/setpfp** - Change bot avatar (Admin)\n"
+                           f"**/resetpfp** - Reset bot avatar (Admin)",
                 color=PURPLE
             )
             embed.set_footer(text="✦ Only visible to bot owner")
@@ -1114,15 +1117,16 @@ async def on_message(message: discord.Message):
             return
 
         # ============================================================
-        # CONFIG COMMAND - ONLY OWNER
+        # PREFIX COMMAND - ADMIN (Per Server)
         # ============================================================
-        elif cmd == "config":
-            if not is_bot_owner(message.author.id):
-                await message.channel.send("❌ Only bot owner can use this command.")
+        elif cmd == "prefix":
+            # Check if user has admin perms OR is bot owner
+            if not message.author.guild_permissions.administrator and not is_bot_owner(message.author.id):
+                await message.channel.send("❌ You need `Administrator` permission to use this command.")
                 return
             
             if not arg:
-                await message.channel.send(f"❌ Usage: `{prefix}config <new_prefix>`")
+                await message.channel.send(f"❌ Usage: `{prefix}prefix <new_prefix>`")
                 return
             
             new_prefix = arg.strip()
@@ -1132,7 +1136,7 @@ async def on_message(message: discord.Message):
             
             guild_prefixes[message.guild.id] = new_prefix
             save_config()
-            await message.channel.send(f"✅ Prefix changed to `{new_prefix}`")
+            await message.channel.send(f"✅ Prefix changed to `{new_prefix}` for this server!")
             return
 
         # ============================================================
@@ -1328,24 +1332,24 @@ async def leave_slash(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ Not in a VC.", ephemeral=True)
 
-@bot.tree.command(name="setpfp", description="Change bot avatar")
+@bot.tree.command(name="setpfp", description="Change bot avatar (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpfp_slash(interaction: discord.Interaction, image: discord.Attachment):
     await interaction.response.defer(ephemeral=True)
     try:
         img = await image.read()
         await interaction.guild.me.edit(avatar=img)
-        await interaction.followup.send("✅ Avatar updated!")
+        await interaction.followup.send("✅ Avatar updated for this server!")
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: {e}")
 
-@bot.tree.command(name="resetpfp", description="Reset bot avatar to default")
+@bot.tree.command(name="resetpfp", description="Reset bot avatar to default (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def resetpfp_slash(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     try:
         await interaction.guild.me.edit(avatar=None)
-        await interaction.followup.send("✅ Avatar reset.")
+        await interaction.followup.send("✅ Avatar reset to default for this server!")
     except Exception as e:
         await interaction.followup.send(f"❌ Failed: {e}")
 
