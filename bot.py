@@ -10,7 +10,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp
-import base64
 import tempfile
 
 # ============================================================
@@ -41,10 +40,10 @@ intents.message_content = True
 intents.guilds = True
 intents.voice_states = True
 intents.members = True
-bot = commands.Bot(command_prefix="'", intents=intents)
+bot = commands.Bot(command_prefix="&", intents=intents)  # ✅ Default prefix & 
 PURPLE = discord.Color.from_rgb(155, 93, 229)
 SUPPORT_SERVER_INVITE = "https://discord.gg/5ygnUWdG7D"
-DEFAULT_PREFIX = "'"
+DEFAULT_PREFIX = "&"
 
 # ============================================================
 # CUSTOM EMOJIS
@@ -145,7 +144,7 @@ if COOKIE_CONTENT:
         print(f"[YT-DLP] Error creating cookies file: {e}")
 
 YTDL_OPTIONS = {
-    "format": "bestaudio[abr>0]/bestaudio/best",
+    "format": "bestaudio/best",
     "extractaudio": True,
     "audioformat": "mp3",
     "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
@@ -159,11 +158,6 @@ YTDL_OPTIONS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web", "tv", "ios"]
-        }
-    }
 }
 if COOKIES_FILE and os.path.exists(COOKIES_FILE):
     YTDL_OPTIONS["cookiefile"] = COOKIES_FILE
@@ -174,9 +168,6 @@ FFMPEG_OPTIONS = {
     "options": "-vn"
 }
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-YTDL_FLAT_OPTIONS = dict(YTDL_OPTIONS)
-YTDL_FLAT_OPTIONS["extract_flat"] = "in_playlist"
-ytdl_flat = yt_dlp.YoutubeDL(YTDL_FLAT_OPTIONS)
 
 # ============================================================
 # STATE
@@ -187,7 +178,6 @@ loop_modes = {}
 now_playing_messages = {}
 progress_tasks = {}
 mode_247 = {}
-last_track = {}
 QUEUE_NOTICE_BUTTON_TIMEOUT = 30
 QUEUE_NOTICE_DELETE_AFTER = 60
 NOW_PLAYING_REFRESH_SECONDS = 2
@@ -224,26 +214,15 @@ _http_session = None
 # ============================================================
 async def resolve_youtube(query, requester, single=False):
     loop = asyncio.get_event_loop()
-    extractor = ytdl_flat if "list=" in str(query) else ytdl
     try:
-        data = await loop.run_in_executor(None, lambda: extractor.extract_info(query, download=False))
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
     except Exception as e:
-        if "Sign in to confirm" in str(e) or "bot" in str(e).lower():
-            print(f"[YT-DLP] YouTube blocked request, trying alternate clients...")
-            original_clients = YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"]
-            YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = ["tv", "ios"]
-            ytdl_alt = yt_dlp.YoutubeDL(YTDL_OPTIONS)
-            try:
-                data = await loop.run_in_executor(None, lambda: ytdl_alt.extract_info(query, download=False))
-                print(f"[YT-DLP] Success with alternate client!")
-            except Exception as e2:
-                YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = original_clients
-                raise RuntimeError(f"YouTube is blocking requests. Error: {e2}")
-            YTDL_OPTIONS["extractor_args"]["youtube"]["player_client"] = original_clients
-        else:
-            raise
+        print(f"[YT-DLP ERROR] {e}")
+        raise RuntimeError(f"YouTube error: {e}")
+    
     if not data:
         raise RuntimeError("No result found.")
+    
     if data.get("entries"):
         entries = [e for e in data["entries"] if e]
         if not entries:
@@ -266,6 +245,7 @@ async def resolve_youtube(query, requester, single=False):
             "stream_url": e.get("url"),
             "duration_sec": e.get("duration") or 0
         }]
+    
     return [{
         "query": query,
         "title": data.get("title", query),
@@ -342,7 +322,7 @@ def mark_resumed(guild_id):
         song["paused_at"] = None
 
 # ============================================================
-# MUSIC VIEW - BUTTONS
+# BUTTONS INSIDE EMBED - USING COMPONENTS
 # ============================================================
 class MusicView(discord.ui.View):
     def __init__(self, guild_id):
@@ -417,7 +397,7 @@ class JoinLogView(discord.ui.View):
         ))
 
 # ============================================================
-# NOW PLAYING EMBED
+# EMBED WITH BUTTONS INSIDE
 # ============================================================
 def build_now_playing_embed(guild_id, paused=False):
     song = current_song.get(guild_id)
@@ -426,7 +406,7 @@ def build_now_playing_embed(guild_id, paused=False):
             description="### ◈ Nothing Casting\n▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹",
             color=PURPLE
         )
-        embed.set_footer(text="✦ Queue a track with /play or 'play")
+        embed.set_footer(text="✦ Queue a track with /play or &play")
         return embed
     
     elapsed = get_elapsed_seconds(guild_id)
@@ -512,7 +492,6 @@ async def update_now_playing_message(guild_id):
     guild = bot.get_guild(guild_id)
     vc = guild.voice_client if guild else None
     try:
-        # ✅ SAHI TAREEQA - Embed aur View alag alag
         await msg.edit(embed=build_now_playing_embed(guild_id, paused=vc.is_paused() if vc else False), view=MusicView(guild_id))
         return None
     except discord.NotFound:
@@ -549,6 +528,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
     vc = guild.voice_client
     if not vc:
         return
+    
     if preloaded is not None:
         query = preloaded.get("query")
         requester = preloaded.get("requester")
@@ -603,12 +583,8 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             duration_str = f"{minutes:02d}:{seconds:02d}"
         except Exception as e:
             error_detail = str(e)
-            if "sign in" in error_detail.lower() or "cookies" in error_detail.lower():
-                hint = "\n\n💡 YouTube is blocking this request. Please set up cookies."
-            else:
-                hint = ""
             if send_func:
-                await send_func(text=f"😵‍💫 Couldn't cast **{query}** — skipping.\n`{error_detail}`{hint}")
+                await send_func(text=f"😵‍💫 Couldn't cast **{query}** — skipping.\n`{error_detail}`")
             await play_next(guild, channel, send_func)
             return
 
@@ -665,22 +641,19 @@ async def enqueue_song(guild, channel, user, query, send_func):
     try:
         items = await resolve_youtube(query, user)
     except Exception as e:
-        error_msg = str(e)
-        if "Sign in to confirm" in error_msg or "cookies" in error_msg.lower():
-            return await send_func(
-                text=f"❌ YouTube is blocking requests. Please set up cookies.\n`{error_msg}`"
-            )
-        return await send_func(text=f"😵‍💫 Couldn't add **{query}**.\n`{error_msg}`")
+        return await send_func(text=f"😵‍💫 Couldn't add **{query}**.\n`{e}`")
+    
     was_playing = vc.is_playing() or vc.is_paused()
     for item in items:
         item.setdefault("query", query)
         item.setdefault("title", item.get("query", "Unknown Track"))
         item.setdefault("requester", user)
         item["_queue_id"] = f"{time.time_ns()}-{random.randint(1000, 9999)}"
+    
     if was_playing:
         for item in items:
             get_queue(guild.id).append(item)
-        if len(items) > 10:
+        if len(items) > 1:
             await send_func(text=f"✦ Added **{len(items)}** tracks to the queue.")
         await update_now_playing_message(guild.id)
     else:
@@ -921,7 +894,7 @@ async def on_message(message: discord.Message):
     prefix = get_prefix(message.guild.id)
     command_text = None
 
-    # PING = GUIDE
+    # PING = GUIDE (PUBLIC)
     if bot.user in message.mentions:
         command_text = content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         if not command_text:
@@ -936,14 +909,13 @@ async def on_message(message: discord.Message):
                            f"`{prefix}shuffle` - Shuffle queue\n"
                            f"`{prefix}loop` - Toggle loop mode\n"
                            f"\n### 📻 **Extra Features**\n"
-                           f"`{prefix}geninvite <server_id>` - Generate invite\n"
-                           f"`/recommend` - Get recommendations\n"
+                           f"`{prefix}queue` - Show queue\n"
+                           f"`{prefix}np` - Show current song\n"
+                           f"`/play` - Slash command play\n"
                            f"`/247` - Toggle 24/7 mode\n"
-                           f"\n### ⚙️ **Admin (Owner Only)**\n"
-                           f"`{prefix}config <prefix>` - Change prefix\n"
-                           f"`{prefix}buttons` - Customize buttons\n"
-                           f"`{prefix}setlog <join/music/error> <#channel>` - Set log channel\n"
-                           f"`/setpfp` - Change avatar",
+                           f"`/leave` - Make bot leave VC\n"
+                           f"\n### 🔐 **Owner Only**\n"
+                           f"`{prefix}owneronly` - Show owner commands",
                 color=PURPLE
             )
             embed.set_footer(text="✦ Casting spells with music ✦")
@@ -974,9 +946,33 @@ async def on_message(message: discord.Message):
         arg = parts[1].strip() if len(parts) > 1 else ""
 
         # ============================================================
+        # OWNER ONLY COMMANDS
+        # ============================================================
+        if cmd == "owneronly":
+            if not is_bot_owner(message.author.id):
+                await message.channel.send("❌ Only bot owner can use this command.")
+                return
+            
+            embed = discord.Embed(
+                title="🔐 **Owner Only Commands**",
+                description=f"**{prefix}buttons** - Customize button emojis\n"
+                           f"**{prefix}geninvite <server_id>** - Generate server invite\n"
+                           f"**{prefix}setlog <join/music/error> <#channel>** - Set log channel\n"
+                           f"**{prefix}config <prefix>** - Change bot prefix\n"
+                           f"**{prefix}owneronly** - Show this menu\n"
+                           f"\n**Slash Commands:**\n"
+                           f"**/setpfp** - Change bot avatar\n"
+                           f"**/resetpfp** - Reset bot avatar",
+                color=PURPLE
+            )
+            embed.set_footer(text="✦ Only visible to bot owner")
+            await message.channel.send(embed=embed)
+            return
+
+        # ============================================================
         # BUTTON COMMAND - ONLY OWNER
         # ============================================================
-        if cmd == "buttons":
+        elif cmd == "buttons":
             if not is_bot_owner(message.author.id):
                 await message.channel.send("❌ Only bot owner can use this command.")
                 return
@@ -1026,7 +1022,7 @@ async def on_message(message: discord.Message):
             return
 
         # ============================================================
-        # GENINVITE COMMAND
+        # GENINVITE COMMAND - ONLY OWNER
         # ============================================================
         elif cmd == "geninvite":
             if not is_bot_owner(message.author.id):
@@ -1088,7 +1084,7 @@ async def on_message(message: discord.Message):
             return
 
         # ============================================================
-        # SETLOG COMMAND
+        # SETLOG COMMAND - ONLY OWNER
         # ============================================================
         elif cmd == "setlog":
             if not is_bot_owner(message.author.id):
@@ -1118,7 +1114,29 @@ async def on_message(message: discord.Message):
             return
 
         # ============================================================
-        # HELP COMMAND
+        # CONFIG COMMAND - ONLY OWNER
+        # ============================================================
+        elif cmd == "config":
+            if not is_bot_owner(message.author.id):
+                await message.channel.send("❌ Only bot owner can use this command.")
+                return
+            
+            if not arg:
+                await message.channel.send(f"❌ Usage: `{prefix}config <new_prefix>`")
+                return
+            
+            new_prefix = arg.strip()
+            if len(new_prefix) > 5 or " " in new_prefix:
+                await message.channel.send("❌ Prefix must be 1-5 characters, no spaces.")
+                return
+            
+            guild_prefixes[message.guild.id] = new_prefix
+            save_config()
+            await message.channel.send(f"✅ Prefix changed to `{new_prefix}`")
+            return
+
+        # ============================================================
+        # HELP COMMAND - PUBLIC
         # ============================================================
         elif cmd == "help":
             embed = discord.Embed(
@@ -1134,16 +1152,11 @@ async def on_message(message: discord.Message):
                            f"`{prefix}queue` - Show queue\n"
                            f"`{prefix}np` - Show current song\n"
                            f"\n### 📻 **Extra Features**\n"
-                           f"`{prefix}geninvite <server_id>` - Generate invite\n"
-                           f"`/recommend` - Get recommendations\n"
+                           f"`/play` - Slash command play\n"
                            f"`/247` - Toggle 24/7 mode\n"
                            f"`/leave` - Make bot leave VC\n"
-                           f"\n### ⚙️ **Admin (Owner Only)**\n"
-                           f"`{prefix}config <prefix>` - Change prefix\n"
-                           f"`{prefix}buttons` - Customize buttons\n"
-                           f"`{prefix}setlog <join/music/error> <#channel>` - Set log channel\n"
-                           f"`/setpfp` - Change avatar\n"
-                           f"`/resetpfp` - Reset avatar",
+                           f"\n### 🔐 **Owner Only**\n"
+                           f"`{prefix}owneronly` - Show owner commands",
                 color=PURPLE
             )
             embed.set_footer(text="✦ Casting spells with music ✦")
@@ -1193,45 +1206,6 @@ async def on_message(message: discord.Message):
             if len(queue) > 15:
                 embed.set_footer(text=f"… and {len(queue) - 15} more")
             await message.channel.send(embed=embed)
-            return
-
-        # ============================================================
-        # VOLUME
-        # ============================================================
-        elif cmd == "volume":
-            if not arg:
-                await message.channel.send("🔊 Volume: 100% (Default)")
-                return
-            try:
-                vol = int(arg)
-                if vol < 0 or vol > 200:
-                    await message.channel.send("❌ Volume must be between 0-200")
-                    return
-                await message.channel.send(f"🔊 Volume set to {vol}%")
-            except ValueError:
-                await message.channel.send("❌ Please provide a number (0-200)")
-            return
-
-        # ============================================================
-        # CONFIG COMMAND
-        # ============================================================
-        elif cmd == "config":
-            if not is_bot_owner(message.author.id):
-                await message.channel.send("❌ Only bot owner can use this command.")
-                return
-            
-            if not arg:
-                await message.channel.send(f"❌ Usage: `{prefix}config <new_prefix>`")
-                return
-            
-            new_prefix = arg.strip()
-            if len(new_prefix) > 5 or " " in new_prefix:
-                await message.channel.send("❌ Prefix must be 1-5 characters, no spaces.")
-                return
-            
-            guild_prefixes[message.guild.id] = new_prefix
-            save_config()
-            await message.channel.send(f"✅ Prefix changed to `{new_prefix}`")
             return
 
         # ============================================================
@@ -1354,17 +1328,6 @@ async def leave_slash(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ Not in a VC.", ephemeral=True)
 
-@bot.tree.command(name="config", description="Set quick-play prefix")
-@app_commands.checks.has_permissions(administrator=True)
-async def config_slash(interaction: discord.Interaction, prefix: str):
-    prefix = prefix.strip()
-    if not prefix or len(prefix) > 5 or " " in prefix:
-        await interaction.response.send_message("❌ Prefix must be 1-5 chars, no spaces.", ephemeral=True)
-        return
-    guild_prefixes[interaction.guild.id] = prefix
-    save_config()
-    await interaction.response.send_message(f"✅ Prefix set to {prefix}", ephemeral=True)
-
 @bot.tree.command(name="setpfp", description="Change bot avatar")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpfp_slash(interaction: discord.Interaction, image: discord.Attachment):
@@ -1397,6 +1360,7 @@ async def on_ready():
         await update_bot_presence()
         print(f"Logged in as {bot.user} | Synced {len(synced)} slash commands.")
         print(f"Bot is in {len(bot.guilds)} servers")
+        print(f"Default prefix: &")
     except Exception as e:
         print(f"[SYNC ERROR] {e}")
 
