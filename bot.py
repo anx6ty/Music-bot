@@ -9,7 +9,6 @@ from typing import Optional
 
 import aiohttp
 import discord
-import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from discord.ext import commands
 from discord.ui import Button, View
