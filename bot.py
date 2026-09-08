@@ -96,7 +96,12 @@ def get_emoji(key):
 # ============================================================
 # PERSISTENT CONFIG
 # ============================================================
-CONFIG_FILE = "guild_config.json"
+# CONFIG_DIR should point at your Railway Volume's mount path (e.g. /data).
+# Set the CONFIG_DIR env var to that path — otherwise this falls back to the
+# container's local disk, which Railway wipes on every redeploy/restart.
+CONFIG_DIR = os.getenv("CONFIG_DIR", ".")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "guild_config.json")
+
 guild_prefixes = {}
 log_channels = {"join": None, "music": None, "error": None}
 saved_buttons = {}
@@ -104,6 +109,7 @@ saved_buttons = {}
 def load_config():
     global guild_prefixes, log_channels, saved_buttons
     try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         guild_prefixes = {int(k): v for k, v in data.get("prefixes", {}).items()}
@@ -112,21 +118,30 @@ def load_config():
         for k, v in saved_buttons.items():
             if k in _FALLBACK_EMOJI:
                 _FALLBACK_EMOJI[k] = v
-    except:
+        print(f"[CONFIG] Loaded from {CONFIG_FILE}")
+    except FileNotFoundError:
+        print(f"[CONFIG] No existing config at {CONFIG_FILE} — starting fresh.")
+        guild_prefixes = {}
+        log_channels = {"join": None, "music": None, "error": None}
+        saved_buttons = {}
+    except Exception as e:
+        print(f"[CONFIG] Load failed ({CONFIG_FILE}): {e}")
         guild_prefixes = {}
         log_channels = {"join": None, "music": None, "error": None}
         saved_buttons = {}
 
 def save_config():
     try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump({
                 "prefixes": {str(k): v for k, v in guild_prefixes.items()},
                 "log_channels": log_channels,
                 "buttons": saved_buttons
             }, f, indent=2)
-    except:
-        pass
+        print(f"[CONFIG] Saved to {CONFIG_FILE}")
+    except Exception as e:
+        print(f"[CONFIG] Save FAILED ({CONFIG_FILE}): {e}")
 
 load_config()
 
@@ -192,6 +207,97 @@ FFMPEG_OPTIONS = {
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
+
+# ============================================================
+# JIOSAAVN (primary source) — free, unofficial API (saavn.dev)
+# Falls back to YouTube via yt-dlp if a track isn't found here.
+# ============================================================
+JIOSAAVN_API_BASE = "https://saavn.dev/api"
+JIOSAAVN_QUALITY_ORDER = ("320kbps", "160kbps", "96kbps", "48kbps", "12kbps")
+
+def _is_url(text):
+    return text.strip().lower().startswith(("http://", "https://"))
+
+async def jiosaavn_search(query, limit=1):
+    """Search JioSaavn for a track. Returns a list of resolved track dicts (may be empty)."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            params = {"query": query, "limit": limit}
+            async with session.get(f"{JIOSAAVN_API_BASE}/search/songs", params=params) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+    except Exception as e:
+        print(f"[JIOSAAVN] search error: {e}")
+        return []
+
+    results = ((data or {}).get("data") or {}).get("results") or []
+    tracks = []
+    for item in results:
+        download_urls = item.get("downloadUrl") or []
+        stream_url = None
+        for q in JIOSAAVN_QUALITY_ORDER:
+            match = next((d.get("url") for d in download_urls if d.get("quality") == q and d.get("url")), None)
+            if match:
+                stream_url = match
+                break
+        if not stream_url:
+            continue
+
+        images = item.get("image") or []
+        thumbnail = images[-1]["url"] if images else None
+        primary_artists = ((item.get("artists") or {}).get("primary") or [])
+        artist = ", ".join(a.get("name", "") for a in primary_artists if a.get("name")) or None
+
+        tracks.append({
+            "title": item.get("name") or "Unknown Track",
+            "artist": artist,
+            "thumbnail": thumbnail,
+            "webpage_url": item.get("url", ""),
+            "stream_url": stream_url,
+            "duration_sec": item.get("duration") or 0,
+            "source": "jiosaavn",
+        })
+    return tracks
+
+async def resolve_track(query):
+    """
+    Resolve a single track for playback.
+    JioSaavn first (if the query is plain text, not a link) — YouTube (yt-dlp) as fallback.
+    Returns a track dict, or raises an Exception if nothing could be found.
+    """
+    if not _is_url(query):
+        js_tracks = await jiosaavn_search(query, limit=1)
+        if js_tracks:
+            track = js_tracks[0]
+            track["query"] = query
+            return track
+
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+    if not data:
+        raise RuntimeError("No data")
+    if data.get("entries"):
+        entries = [e for e in data["entries"] if e]
+        if not entries:
+            raise RuntimeError("No playable entries")
+        data = entries[0]
+
+    song_url = data.get("url")
+    if not song_url:
+        raise RuntimeError("No audio URL")
+
+    return {
+        "title": data.get("title", "Unknown Track"),
+        "artist": data.get("artist") or data.get("uploader"),
+        "thumbnail": data.get("thumbnail"),
+        "webpage_url": data.get("webpage_url", ""),
+        "stream_url": song_url,
+        "duration_sec": data.get("duration") or 0,
+        "source": "youtube",
+        "query": query,
+    }
 
 # ============================================================
 # STATE
@@ -317,8 +423,11 @@ class MusicLayoutView(discord.ui.LayoutView):
                 container.add_item(discord.ui.TextDisplay(f"**Up next**\n{qn[:100]}"))
 
             requester = song.get("requester")
+            source_label = "JioSaavn" if song.get("source") == "jiosaavn" else "YouTube"
             if requester:
-                container.add_item(discord.ui.TextDisplay(f"Added by {requester.mention}"))
+                container.add_item(discord.ui.TextDisplay(f"-# Added by {requester.mention}  ·  via {source_label}"))
+            else:
+                container.add_item(discord.ui.TextDisplay(f"-# via {source_label}"))
 
         container.add_item(discord.ui.Separator())
 
@@ -487,37 +596,12 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         requester = item["requester"]
         song_data = item
 
-    loop = asyncio.get_event_loop()
-
+    # Already-resolved track (from enqueue_song preload, or a JioSaavn-cached queue item)
     if song_data and song_data.get("stream_url"):
-        song_url = song_data["stream_url"]
-        title = song_data.get("title", "Unknown Track")
-        artist = song_data.get("artist")
-        duration_sec = song_data.get("duration_sec") or 0
-        thumbnail = song_data.get("thumbnail")
-        webpage_url = song_data.get("webpage_url", "")
-        minutes, seconds = divmod(int(duration_sec), 60)
-        duration_str = f"{minutes:02d}:{seconds:02d}"
+        track = song_data
     else:
         try:
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-            if not data:
-                raise RuntimeError("No data")
-            if data.get("entries"):
-                entries = [e for e in data["entries"] if e]
-                if not entries:
-                    raise RuntimeError("No playable entries")
-                data = entries[0]
-            song_url = data.get("url")
-            if not song_url:
-                raise RuntimeError("No audio URL")
-            title = data.get("title", "Unknown Track")
-            artist = data.get("artist") or data.get("uploader")
-            duration_sec = data.get("duration") or 0
-            thumbnail = data.get("thumbnail")
-            webpage_url = data.get("webpage_url", "")
-            minutes, seconds = divmod(int(duration_sec), 60)
-            duration_str = f"{minutes:02d}:{seconds:02d}"
+            track = await resolve_track(query)
         except Exception as e:
             err = str(e)
             if "sign in" in err.lower() or "cookies" in err.lower():
@@ -529,6 +613,16 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             await play_next(guild, channel, send_func)
             return
 
+    song_url = track["stream_url"]
+    title = track.get("title", "Unknown Track")
+    artist = track.get("artist")
+    thumbnail = track.get("thumbnail")
+    webpage_url = track.get("webpage_url", "")
+    duration_sec = track.get("duration_sec") or 0
+    track_source = track.get("source", "youtube")
+    minutes, seconds = divmod(int(duration_sec), 60)
+    duration_str = f"{minutes:02d}:{seconds:02d}"
+
     current_song[guild_id] = {
         "title": title,
         "artist": artist,
@@ -537,6 +631,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         "duration_str": duration_str,
         "duration_sec": duration_sec,
         "requester": requester,
+        "source": track_source,
         "_query": query,
         "start_time": time.time(),
         "paused_at": None,
@@ -559,8 +654,8 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
         asyncio.run_coroutine_threadsafe(play_next(guild, channel), bot.loop)
 
     try:
-        source = discord.FFmpegOpusAudio(song_url, **FFMPEG_OPTIONS)
-        vc.play(source, after=after_play)
+        audio_source = discord.FFmpegOpusAudio(song_url, **FFMPEG_OPTIONS)
+        vc.play(audio_source, after=after_play)
     except Exception as e:
         if send_func:
             await send_func(text=f"❌ Playback error: `{e}`")
@@ -583,39 +678,53 @@ async def enqueue_song(guild, channel, user, query, send_func):
     if err:
         return await send_func(text=err)
 
-    try:
-        items = await asyncio.get_event_loop().run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-        if not items:
-            raise RuntimeError("No results")
-        if not isinstance(items, list):
-            if items.get("entries"):
-                items = [e for e in items["entries"] if e]
-            else:
-                items = [items]
+    track_list = []
 
-        track_list = []
-        for data in items:
-            if not data:
-                continue
-            track = {
-                "query": data.get("webpage_url") or query,
-                "title": data.get("title", "Unknown"),
-                "artist": data.get("artist") or data.get("uploader"),
-                "thumbnail": data.get("thumbnail"),
-                "webpage_url": data.get("webpage_url", ""),
-                "requester": user,
-                "_queue_id": f"{time.time_ns()}-{random.randint(1000,9999)}"
-            }
-            if data.get("url"):
-                track["stream_url"] = data["url"]
-                track["duration_sec"] = data.get("duration") or 0
-            track_list.append(track)
+    # 1) Try JioSaavn first — only for plain search terms (not direct links/playlists).
+    if not _is_url(query):
+        js_tracks = await jiosaavn_search(query, limit=1)
+        if js_tracks:
+            js_track = js_tracks[0]
+            js_track["query"] = query
+            js_track["requester"] = user
+            js_track["_queue_id"] = f"{time.time_ns()}-{random.randint(1000,9999)}"
+            track_list = [js_track]
 
-        if not track_list:
-            raise RuntimeError("No playable tracks found")
+    # 2) Fallback to YouTube (yt-dlp) — also handles direct links/playlists.
+    if not track_list:
+        try:
+            items = await asyncio.get_event_loop().run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+            if not items:
+                raise RuntimeError("No results")
+            if not isinstance(items, list):
+                if items.get("entries"):
+                    items = [e for e in items["entries"] if e]
+                else:
+                    items = [items]
 
-    except Exception as e:
-        return await send_func(text=f"⚠️ Couldn't add **{query}**.\n`{e}`")
+            for data in items:
+                if not data:
+                    continue
+                track = {
+                    "query": data.get("webpage_url") or query,
+                    "title": data.get("title", "Unknown"),
+                    "artist": data.get("artist") or data.get("uploader"),
+                    "thumbnail": data.get("thumbnail"),
+                    "webpage_url": data.get("webpage_url", ""),
+                    "source": "youtube",
+                    "requester": user,
+                    "_queue_id": f"{time.time_ns()}-{random.randint(1000,9999)}"
+                }
+                if data.get("url"):
+                    track["stream_url"] = data["url"]
+                    track["duration_sec"] = data.get("duration") or 0
+                track_list.append(track)
+
+            if not track_list:
+                raise RuntimeError("No playable tracks found")
+
+        except Exception as e:
+            return await send_func(text=f"⚠️ Couldn't add **{query}**.\n`{e}`")
 
     was_playing = vc.is_playing() or vc.is_paused()
 
@@ -1032,6 +1141,17 @@ async def mode_247_slash(interaction: discord.Interaction):
     mode_247[gid] = not mode_247.get(gid, False)
     embed = discord.Embed(description=f"24/7 mode: **{'enabled' if mode_247[gid] else 'disabled'}**", color=PURPLE)
     await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="prefix", description="Change this server's command prefix (Admin only)")
+async def prefix_slash(interaction: discord.Interaction, new_prefix: str):
+    if not (interaction.user.guild_permissions.administrator or is_bot_owner(interaction.user.id)):
+        return await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
+    new_prefix = new_prefix.strip()
+    if not new_prefix or len(new_prefix) > 5 or " " in new_prefix:
+        return await interaction.response.send_message("❌ Prefix must be 1-5 characters, no spaces.", ephemeral=True)
+    guild_prefixes[interaction.guild.id] = new_prefix
+    save_config()
+    await interaction.response.send_message(f"✅ Prefix changed to `{new_prefix}`")
 
 @bot.tree.command(name="leave", description="Make the bot leave voice")
 async def leave_slash(interaction: discord.Interaction):
