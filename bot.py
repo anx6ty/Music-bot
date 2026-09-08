@@ -17,7 +17,7 @@ import yt_dlp
 print(f"[DISCORD.PY] Version: {discord.__version__}")
 _dpy_major, _dpy_minor = (int(x) for x in discord.__version__.split(".")[:2])
 if (_dpy_major, _dpy_minor) < (2, 6):
-    print("[WARNING] discord.py < 2.6 detected — Components V2 (the new Now Playing "
+    print("[WARNING] discord.py < 2.6 detected — Components V2 (the Now Playing "
           "card) will NOT work. Please upgrade: pip install -U discord.py")
 
 # ============================================================
@@ -31,8 +31,8 @@ if not discord.opus.is_loaded():
             break
         except OSError:
             continue
-    if not discord.opus.is_loaded():
-        print("[OPUS] WARNING: Could not load opus!")
+if not discord.opus.is_loaded():
+    print("[OPUS] WARNING: Could not load opus!")
 
 # ============================================================
 # BOT SETUP
@@ -44,7 +44,9 @@ intents.voice_states = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="&", intents=intents)
+
 PURPLE = discord.Color.from_rgb(155, 93, 229)
+BOT_NAME = "Vibe Bot"
 SUPPORT_SERVER_INVITE = "https://discord.gg/5ygnUWdG7D"
 DEFAULT_PREFIX = "&"
 
@@ -89,7 +91,7 @@ BUTTON_NAMES = {
 }
 
 def get_emoji(key):
-    return _FALLBACK_EMOJI.get(key, "✨")
+    return _FALLBACK_EMOJI.get(key, "🔘")
 
 # ============================================================
 # PERSISTENT CONFIG
@@ -104,12 +106,12 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            guild_prefixes = {int(k): v for k, v in data.get("prefixes", {}).items()}
-            log_channels = data.get("log_channels", {"join": None, "music": None, "error": None})
-            saved_buttons = data.get("buttons", {})
-            for k, v in saved_buttons.items():
-                if k in _FALLBACK_EMOJI:
-                    _FALLBACK_EMOJI[k] = v
+        guild_prefixes = {int(k): v for k, v in data.get("prefixes", {}).items()}
+        log_channels = data.get("log_channels", {"join": None, "music": None, "error": None})
+        saved_buttons = data.get("buttons", {})
+        for k, v in saved_buttons.items():
+            if k in _FALLBACK_EMOJI:
+                _FALLBACK_EMOJI[k] = v
     except:
         guild_prefixes = {}
         log_channels = {"join": None, "music": None, "error": None}
@@ -143,7 +145,7 @@ if COOKIE_CONTENT:
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
             f.write(COOKIE_CONTENT)
             COOKIES_FILE = f.name
-            print("[YT-DLP] Using cookies from environment variable")
+        print("[YT-DLP] Using cookies from environment variable")
     except Exception as e:
         print(f"[YT-DLP] Error with env cookie: {e}")
 
@@ -170,10 +172,6 @@ YTDL_OPTIONS = {
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # FIX: YouTube ka default "web"/"tv_downgraded" player client abhi buggy hai,
-    # isliye "Video unavailable" / "The page needs to be reloaded" errors aa rahe the.
-    # Yeh line yt-dlp ko android -> web_embedded -> web client try karne bolti hai,
-    # jisse extraction fail nahi hota.
     "extractor_args": {
         "youtube": {
             "player_client": ["android", "web_embedded", "web"],
@@ -205,8 +203,6 @@ now_playing_messages = {}
 progress_tasks = {}
 mode_247 = {}
 
-QUEUE_NOTICE_BUTTON_TIMEOUT = 30
-QUEUE_NOTICE_DELETE_AFTER = 60
 NOW_PLAYING_REFRESH_SECONDS = 2
 
 # ============================================================
@@ -277,35 +273,35 @@ def mark_resumed(guild_id):
         song["paused_at"] = None
 
 # ============================================================
-# NOW PLAYING CARD (Components V2)
+# NOW PLAYING CARD (Components V2 — buttons live inside the same card)
 # ============================================================
 class MusicLayoutView(discord.ui.LayoutView):
     def __init__(self, guild_id):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         song = current_song.get(guild_id)
+
         container = discord.ui.Container(accent_color=PURPLE)
 
         if not song:
             container.add_item(discord.ui.TextDisplay(
-                "### ◈ Nothing Casting\n"
-                "▹▹▹▹▹▹▹▹▹▹▹▹▹▹▹\n"
-                "-# ✦ Queue a track with /play or &play"
+                "### Nothing Playing\n"
+                "-# Queue a track with /play or &play"
             ))
         else:
             elapsed = get_elapsed_seconds(guild_id)
-            duration_sec = song.get("duration_sec") or 0
             title = song["title"][:40]
+            artist = song.get("artist")
             url = song.get("webpage_url", "")
 
-            # Simple time display instead of progress bar
-            time_str = f"`{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`"
-
-            main_text = (
-                f"### [{title}]({url})\n"
-                f"{time_str}\n"
-                f"⏱️ `{song.get('duration_str', 'Unknown')}` 🔁 `{get_loop_label(guild_id)}`"
+            text_lines = [f"### [{title}]({url})"]
+            if artist:
+                text_lines.append(f"*{artist}*")
+            text_lines.append(
+                f"⏱️ `{format_time(elapsed)} / {song.get('duration_str', 'Unknown')}`  "
+                f"🔁 `{get_loop_label(guild_id)}`"
             )
+            main_text = "\n".join(text_lines)
 
             if song.get("thumbnail"):
                 section = discord.ui.Section(
@@ -318,30 +314,31 @@ class MusicLayoutView(discord.ui.LayoutView):
 
             qn = format_queue_names(guild_id, limit=3)
             if qn != "empty":
-                container.add_item(discord.ui.TextDisplay(f"📃 **Next**\n{qn[:100]}"))
+                container.add_item(discord.ui.TextDisplay(f"**Up next**\n{qn[:100]}"))
 
             requester = song.get("requester")
             if requester:
-                container.add_item(discord.ui.TextDisplay(f"-# 🪄 Added by {requester.mention}"))
+                container.add_item(discord.ui.TextDisplay(f"Added by {requester.mention}"))
 
-            container.add_item(discord.ui.Separator())
+        container.add_item(discord.ui.Separator())
 
-            row1 = discord.ui.ActionRow(
-                discord.ui.Button(label=get_emoji("pause"), style=discord.ButtonStyle.primary, custom_id="pause"),
-                discord.ui.Button(label=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"),
-                discord.ui.Button(label=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"),
-                discord.ui.Button(label=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"),
-            )
-            row2 = discord.ui.ActionRow(
-                discord.ui.Button(label=get_emoji("stop"), style=discord.ButtonStyle.danger, custom_id="stop"),
-                discord.ui.Button(label=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"),
-                discord.ui.Button(label=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"),
-                discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE),
-            )
-            container.add_item(row1)
-            container.add_item(row2)
+        row1 = discord.ui.ActionRow(
+            discord.ui.Button(emoji=get_emoji("pause"), style=discord.ButtonStyle.secondary, custom_id="pause"),
+            discord.ui.Button(emoji=get_emoji("skip"), style=discord.ButtonStyle.secondary, custom_id="skip"),
+            discord.ui.Button(emoji=get_emoji("shuffle"), style=discord.ButtonStyle.secondary, custom_id="shuffle"),
+            discord.ui.Button(emoji=get_emoji("loop"), style=discord.ButtonStyle.secondary, custom_id="loop"),
+        )
+        row2 = discord.ui.ActionRow(
+            discord.ui.Button(emoji=get_emoji("lyrics"), style=discord.ButtonStyle.secondary, custom_id="lyrics"),
+            discord.ui.Button(emoji=get_emoji("queue"), style=discord.ButtonStyle.secondary, custom_id="show_queue"),
+            discord.ui.Button(label="Stop", style=discord.ButtonStyle.danger, custom_id="stop"),
+            discord.ui.Button(label="Support", style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE),
+        )
+        container.add_item(row1)
+        container.add_item(row2)
 
         self.add_item(container)
+
 
 class JoinLogView(discord.ui.View):
     def __init__(self, guild_id):
@@ -349,7 +346,8 @@ class JoinLogView(discord.ui.View):
         self.guild_id = guild_id
         self.add_item(discord.ui.Button(label="GenInvite", emoji=get_emoji("geninvite"), style=discord.ButtonStyle.primary, custom_id=f"geninvite_{guild_id}"))
         self.add_item(discord.ui.Button(label="Leave", emoji=get_emoji("leave"), style=discord.ButtonStyle.danger, custom_id=f"leave_{guild_id}"))
-        self.add_item(discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+        self.add_item(discord.ui.Button(label="Support", style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+
 
 class LeaveConfirmView(discord.ui.View):
     def __init__(self, guild_id):
@@ -363,20 +361,20 @@ class LeaveConfirmView(discord.ui.View):
         guild = bot.get_guild(self.guild_id)
         if not guild:
             return await interaction.response.send_message("❌ Server not found.", ephemeral=True)
-        await interaction.response.send_message(f"👋 Leaving **{guild.name}**...", ephemeral=True)
+        await interaction.response.send_message(f"Leaving **{guild.name}**...", ephemeral=True)
         await guild.leave()
         await interaction.edit_original_response(content=f"✅ Left **{guild.name}**")
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
     async def cancel_leave(self, interaction, button):
-        await interaction.response.send_message("❌ Cancelled.", ephemeral=True)
+        await interaction.response.send_message("Cancelled.", ephemeral=True)
 
 # ============================================================
 # PLAYBACK FUNCTIONS
 # ============================================================
 async def ensure_voice(user, guild):
     if not user.voice or not user.voice.channel:
-        return None, "🚫 Hop into a voice channel first!"
+        return None, "🚫 Join a voice channel first!"
     vc = guild.voice_client
     if not vc:
         try:
@@ -417,7 +415,7 @@ async def delete_now_playing(guild_id):
 
 async def update_bot_presence():
     try:
-        await bot.change_presence(activity=discord.Game(name=f"✦ Casting {len(bot.guilds)} servers"))
+        await bot.change_presence(activity=discord.Game(name=f"music | {len(bot.guilds)} servers"))
     except:
         pass
 
@@ -494,6 +492,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
     if song_data and song_data.get("stream_url"):
         song_url = song_data["stream_url"]
         title = song_data.get("title", "Unknown Track")
+        artist = song_data.get("artist")
         duration_sec = song_data.get("duration_sec") or 0
         thumbnail = song_data.get("thumbnail")
         webpage_url = song_data.get("webpage_url", "")
@@ -513,6 +512,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             if not song_url:
                 raise RuntimeError("No audio URL")
             title = data.get("title", "Unknown Track")
+            artist = data.get("artist") or data.get("uploader")
             duration_sec = data.get("duration") or 0
             thumbnail = data.get("thumbnail")
             webpage_url = data.get("webpage_url", "")
@@ -525,12 +525,13 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             else:
                 hint = ""
             if send_func:
-                await send_func(text=f"😵‍💫 Couldn't cast **{query}** — skipping.\n`{err}`{hint}")
+                await send_func(text=f"⚠️ Couldn't play **{query}** — skipping.\n`{err}`{hint}")
             await play_next(guild, channel, send_func)
             return
 
     current_song[guild_id] = {
         "title": title,
+        "artist": artist,
         "webpage_url": webpage_url,
         "thumbnail": thumbnail,
         "duration_str": duration_str,
@@ -549,6 +550,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             get_queue(guild_id).append({
                 "query": query,
                 "title": title,
+                "artist": artist,
                 "thumbnail": thumbnail,
                 "webpage_url": webpage_url,
                 "requester": requester,
@@ -570,6 +572,7 @@ async def play_next(guild, channel, send_func=None, preloaded=None):
             await old.delete()
         except:
             pass
+
     await update_bot_presence()
     msg = await channel.send(view=MusicLayoutView(guild_id))
     now_playing_messages[guild_id] = msg
@@ -589,6 +592,7 @@ async def enqueue_song(guild, channel, user, query, send_func):
                 items = [e for e in items["entries"] if e]
             else:
                 items = [items]
+
         track_list = []
         for data in items:
             if not data:
@@ -596,6 +600,7 @@ async def enqueue_song(guild, channel, user, query, send_func):
             track = {
                 "query": data.get("webpage_url") or query,
                 "title": data.get("title", "Unknown"),
+                "artist": data.get("artist") or data.get("uploader"),
                 "thumbnail": data.get("thumbnail"),
                 "webpage_url": data.get("webpage_url", ""),
                 "requester": user,
@@ -605,17 +610,20 @@ async def enqueue_song(guild, channel, user, query, send_func):
                 track["stream_url"] = data["url"]
                 track["duration_sec"] = data.get("duration") or 0
             track_list.append(track)
+
         if not track_list:
             raise RuntimeError("No playable tracks found")
+
     except Exception as e:
-        return await send_func(text=f"😵‍💫 Couldn't add **{query}**.\n`{e}`")
+        return await send_func(text=f"⚠️ Couldn't add **{query}**.\n`{e}`")
 
     was_playing = vc.is_playing() or vc.is_paused()
+
     if was_playing:
         for t in track_list:
             get_queue(guild.id).append(t)
         if len(track_list) > 1:
-            await send_func(text=f"✦ Added **{len(track_list)}** tracks to queue.")
+            await send_func(text=f"Added **{len(track_list)}** tracks to the queue.")
         await update_now_playing_message(guild.id)
     else:
         preload = track_list[0]
@@ -638,7 +646,7 @@ async def send_log(kind, embed, view=None):
             pass
 
 async def log_join(guild):
-    embed = discord.Embed(title="🟢 Joined Server", description=f"**{guild.name}**", color=discord.Color.green())
+    embed = discord.Embed(title="Joined Server", description=f"**{guild.name}**", color=discord.Color.green())
     embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
     embed.add_field(name="Members", value=str(guild.member_count), inline=True)
     embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else "Unknown", inline=True)
@@ -648,7 +656,7 @@ async def log_join(guild):
     await send_log("join", embed, JoinLogView(guild.id))
 
 async def log_leave(guild):
-    embed = discord.Embed(title="🔴 Left Server", description=f"**{guild.name}**", color=discord.Color.red())
+    embed = discord.Embed(title="Left Server", description=f"**{guild.name}**", color=discord.Color.red())
     embed.add_field(name="Server ID", value=f"`{guild.id}`", inline=True)
     embed.add_field(name="Members", value=str(guild.member_count), inline=True)
     embed.set_footer(text=f"Total: {len(bot.guilds)}")
@@ -666,6 +674,7 @@ async def on_interaction(interaction: discord.Interaction):
     custom_id = interaction.data.get("custom_id")
     if not custom_id:
         return
+
     guild = interaction.guild
     if not guild:
         return
@@ -683,7 +692,7 @@ async def on_interaction(interaction: discord.Interaction):
             for ch in target.channels:
                 if isinstance(ch, (discord.TextChannel, discord.VoiceChannel)) and ch.permissions_for(target.me).create_instant_invite:
                     invite = await ch.create_invite(max_age=86400, max_uses=10)
-                    embed = discord.Embed(title=f"🔗 Invite for {target.name}", description=f"{invite.url}\n\n24h, 10 uses", color=PURPLE)
+                    embed = discord.Embed(title=f"Invite for {target.name}", description=f"{invite.url}\n\n24h, 10 uses", color=PURPLE)
                     if target.icon:
                         embed.set_thumbnail(url=target.icon.url)
                     return await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -702,7 +711,7 @@ async def on_interaction(interaction: discord.Interaction):
         await interaction.response.send_message(f"⚠️ Leave **{target.name}**? Confirm below.", ephemeral=True, view=LeaveConfirmView(target_id))
         return
 
-    if custom_id in ("pause","skip","shuffle","loop","stop","lyrics","show_queue"):
+    if custom_id in ("pause", "skip", "shuffle", "loop", "stop", "lyrics", "show_queue"):
         if custom_id == "pause":
             if not vc or not vc.is_playing():
                 return await interaction.response.send_message("❌ Nothing playing.", ephemeral=True)
@@ -716,39 +725,45 @@ async def on_interaction(interaction: discord.Interaction):
                 mark_paused(guild_id)
                 await interaction.response.edit_message(view=MusicLayoutView(guild_id))
                 await interaction.followup.send(f"⏸️ Paused by {interaction.user.mention}")
+
         elif custom_id == "skip":
             if vc and (vc.is_playing() or vc.is_paused()):
                 vc.stop()
                 await interaction.response.send_message(f"⏭️ Skipped by {interaction.user.mention}")
             else:
                 await interaction.response.send_message("❌ Nothing to skip.", ephemeral=True)
+
         elif custom_id == "shuffle":
             q = get_queue(guild_id)
             if len(q) < 2:
-                return await interaction.response.send_message("❌ Need ≥2 songs.", ephemeral=True)
+                return await interaction.response.send_message("❌ Need at least 2 songs.", ephemeral=True)
             random.shuffle(q)
             await interaction.response.send_message(f"🔀 Shuffled by {interaction.user.mention}")
             await update_now_playing_message(guild_id)
+
         elif custom_id == "loop":
             loop_modes[guild_id] = next_loop_mode(loop_modes.get(guild_id))
             await interaction.response.edit_message(view=MusicLayoutView(guild_id))
+
         elif custom_id == "stop":
             await interaction.response.defer()
             await stop_playback(guild, delete_message=interaction.message)
-            await interaction.followup.send(f"💨 Stopped by {interaction.user.mention}")
+            await interaction.followup.send(f"⏹️ Stopped by {interaction.user.mention}")
+
         elif custom_id == "lyrics":
             song = current_song.get(guild_id)
             if not song:
                 return await interaction.response.send_message("❌ No song.", ephemeral=True)
-            embed = discord.Embed(description=f"📝 **{song.get('title', 'Unknown')}**\n*Lyrics not available*", color=PURPLE)
+            embed = discord.Embed(description=f"**{song.get('title', 'Unknown')}**\n*Lyrics not available*", color=PURPLE)
             await interaction.response.send_message(embed=embed, ephemeral=True)
+
         elif custom_id == "show_queue":
             q = get_queue(guild_id)
             if not q:
-                return await interaction.response.send_message("📃 Queue empty.", ephemeral=True)
-            embed = discord.Embed(title="📃 Queue", description="\n".join(f"{i+1}. {item.get('title','Unknown')[:40]}" for i,item in enumerate(q[:10])), color=PURPLE)
+                return await interaction.response.send_message("📃 Queue is empty.", ephemeral=True)
+            embed = discord.Embed(title="Queue", description="\n".join(f"{i+1}. {item.get('title','Unknown')[:40]}" for i, item in enumerate(q[:10])), color=PURPLE)
             if len(q) > 10:
-                embed.set_footer(text=f"… and {len(q)-10} more")
+                embed.set_footer(text=f"…and {len(q)-10} more")
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ============================================================
@@ -767,19 +782,21 @@ async def on_message(message: discord.Message):
         txt = content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         if not txt:
             embed = discord.Embed(
-                description=f"## 🪄 **Jaduu Bot Guide**\n"
-                            f"### 🎵 **Music**\n"
-                            f"`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
-                            f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
-                            f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
+                description=(
+                    f"## {BOT_NAME}\n"
+                    f"### Music\n"
+                    f"`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n"
+                    f"`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
+                    f"\n### Extra\n`/play`\n`/247`\n`/leave`\n"
+                    f"\n### Owner only\n`{prefix}owneronly`"
+                ),
                 color=PURPLE
             )
-            embed.set_footer(text="✦ Casting spells with music ✦")
             view = discord.ui.View(timeout=None)
-            view.add_item(discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
-            view.add_item(discord.ui.Button(label="Invite", emoji="🤖", style=discord.ButtonStyle.link, url=f"https://discord.com/api/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"))
+            view.add_item(discord.ui.Button(label="Support", style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+            view.add_item(discord.ui.Button(label="Invite", style=discord.ButtonStyle.link, url=f"https://discord.com/api/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"))
             await message.channel.send(embed=embed, view=view)
-            return
+        return
 
     if not lowered.startswith(prefix.lower()):
         return
@@ -791,13 +808,15 @@ async def on_message(message: discord.Message):
         if not is_bot_owner(message.author.id):
             return await message.channel.send("❌ Only owner.")
         embed = discord.Embed(
-            title="🔐 Owner Commands",
-            description=f"**{prefix}buttons** – customize button emojis\n"
-                        f"**{prefix}geninvite <server_id>** – generate invite\n"
-                        f"**{prefix}setlog <type> <channel>**\n"
-                        f"**{prefix}prefix <new>** – server prefix (admin too)\n"
-                        f"**{prefix}owneronly** – this menu\n"
-                        f"**/setpfp**, **/resetpfp** (admin)",
+            title="Owner Commands",
+            description=(
+                f"**{prefix}buttons** – customize button emojis\n"
+                f"**{prefix}geninvite <server_id>** – generate invite\n"
+                f"**{prefix}setlog <type> <channel>**\n"
+                f"**{prefix}prefix <new>** – server prefix (admin too)\n"
+                f"**{prefix}owneronly** – this menu\n"
+                f"**/setpfp**, **/resetpfp** (admin)"
+            ),
             color=PURPLE
         )
         await message.channel.send(embed=embed)
@@ -807,7 +826,7 @@ async def on_message(message: discord.Message):
         if not is_bot_owner(message.author.id):
             return await message.channel.send("❌ Only owner.")
         if not arg:
-            embed = discord.Embed(title="🎛️ Button Config", color=PURPLE)
+            embed = discord.Embed(title="Button Config", color=PURPLE)
             for k, v in BUTTON_NAMES.items():
                 embed.add_field(name=v, value=get_emoji(k), inline=True)
             embed.add_field(name="How to change", value=f"`{prefix}buttons <name> <emoji>`\nValid: {', '.join(BUTTON_NAMES.keys())}", inline=False)
@@ -845,12 +864,12 @@ async def on_message(message: discord.Message):
             for ch in guild.channels:
                 if isinstance(ch, (discord.TextChannel, discord.VoiceChannel)) and ch.permissions_for(guild.me).create_instant_invite:
                     invite = await ch.create_invite(max_age=86400, max_uses=10)
-                    embed = discord.Embed(title=f"🔗 Invite for {guild.name}", description=f"{invite.url}\n\n24h, 10 uses", color=PURPLE)
+                    embed = discord.Embed(title=f"Invite for {guild.name}", description=f"{invite.url}\n\n24h, 10 uses", color=PURPLE)
                     if guild.icon:
                         embed.set_thumbnail(url=guild.icon.url)
                     view = discord.ui.View(timeout=None)
-                    view.add_item(discord.ui.Button(label="Invite Link", emoji="🔗", style=discord.ButtonStyle.link, url=invite.url))
-                    view.add_item(discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+                    view.add_item(discord.ui.Button(label="Invite Link", style=discord.ButtonStyle.link, url=invite.url))
+                    view.add_item(discord.ui.Button(label="Support", style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
                     await message.channel.send(embed=embed, view=view)
                     return
             await message.channel.send("❌ No channel with invite perms.")
@@ -865,7 +884,7 @@ async def on_message(message: discord.Message):
         if len(parts) < 2:
             return await message.channel.send(f"❌ Usage: `{prefix}setlog <type> <channel>`")
         typ, chan = parts[0].lower(), parts[1].strip()
-        if typ not in ("join","music","error"):
+        if typ not in ("join", "music", "error"):
             return await message.channel.send("❌ Invalid type. Use join/music/error.")
         ch = parse_channel_arg(message.guild, chan)
         if not ch:
@@ -879,10 +898,10 @@ async def on_message(message: discord.Message):
         if not (message.author.guild_permissions.administrator or is_bot_owner(message.author.id)):
             return await message.channel.send("❌ Admin permission required.")
         if not arg:
-            return await message.channel.send(f"❌ Usage: `{prefix}prefix <new_prefix>`")
+            return await message.channel.send(f"❌ Usage: `{prefix}prefix <new>`")
         newp = arg.strip()
         if len(newp) > 5 or " " in newp:
-            return await message.channel.send("❌ Prefix 1-5 chars, no spaces.")
+            return await message.channel.send("❌ Prefix must be 1-5 chars, no spaces.")
         guild_prefixes[message.guild.id] = newp
         save_config()
         await message.channel.send(f"✅ Prefix changed to `{newp}`")
@@ -890,16 +909,18 @@ async def on_message(message: discord.Message):
 
     if cmd in ("help", "h"):
         embed = discord.Embed(
-            description=f"## 🪄 **Jaduu Bot Commands**\n"
-                        f"### 🎵 **Music**\n`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
-                        f"\n### 📻 **Extra**\n`/play`\n`/247`\n`/leave`\n"
-                        f"\n### 🔐 **Owner Only**\n`{prefix}owneronly`",
+            description=(
+                f"## {BOT_NAME}\n"
+                f"### Music\n`{prefix}play <song>`\n`{prefix}skip`\n`{prefix}pause`\n`{prefix}resume`\n"
+                f"`{prefix}stop`\n`{prefix}shuffle`\n`{prefix}loop`\n`{prefix}queue`\n`{prefix}np`\n"
+                f"\n### Extra\n`/play`\n`/247`\n`/leave`\n"
+                f"\n### Owner only\n`{prefix}owneronly`"
+            ),
             color=PURPLE
         )
-        embed.set_footer(text="✦ Casting spells")
         view = discord.ui.View(timeout=None)
-        view.add_item(discord.ui.Button(label="Support", emoji=get_emoji("support"), style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
-        view.add_item(discord.ui.Button(label="Invite", emoji="🤖", style=discord.ButtonStyle.link, url=f"https://discord.com/api/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"))
+        view.add_item(discord.ui.Button(label="Support", style=discord.ButtonStyle.link, url=SUPPORT_SERVER_INVITE))
+        view.add_item(discord.ui.Button(label="Invite", style=discord.ButtonStyle.link, url=f"https://discord.com/api/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"))
         await message.channel.send(embed=embed, view=view)
         return
 
@@ -913,17 +934,18 @@ async def on_message(message: discord.Message):
     if cmd == "queue":
         q = get_queue(message.guild.id)
         if not q:
-            return await message.channel.send("📃 Queue empty.")
-        embed = discord.Embed(title="📃 Queue", description="\n".join(f"{i+1}. {item.get('title','Unknown')[:50]}" for i,item in enumerate(q[:15])), color=PURPLE)
+            return await message.channel.send("📃 Queue is empty.")
+        embed = discord.Embed(title="Queue", description="\n".join(f"{i+1}. {item.get('title','Unknown')[:50]}" for i, item in enumerate(q[:15])), color=PURPLE)
         if len(q) > 15:
-            embed.set_footer(text=f"… and {len(q)-15} more")
+            embed.set_footer(text=f"…and {len(q)-15} more")
         await message.channel.send(embed=embed)
         return
 
     if cmd in ("p", "play"):
         if not arg:
-            return await message.channel.send("❌ Give a song.")
-        await enqueue_song(message.guild, message.channel, message.author, arg, lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view))
+            return await message.channel.send("❌ Give a song name or link.")
+        await enqueue_song(message.guild, message.channel, message.author, arg,
+                            lambda embed=None, view=None, text=None: message.channel.send(content=text, embed=embed, view=view))
         return
 
     if cmd == "skip":
@@ -965,7 +987,7 @@ async def on_message(message: discord.Message):
     if cmd == "shuffle":
         q = get_queue(message.guild.id)
         if len(q) < 2:
-            return await message.channel.send("❌ Need ≥2 songs.")
+            return await message.channel.send("❌ Need at least 2 songs.")
         random.shuffle(q)
         await message.channel.send(f"🔀 Shuffled by {message.author.mention}")
         await update_now_playing_message(message.guild.id)
@@ -973,7 +995,7 @@ async def on_message(message: discord.Message):
 
     if cmd == "loop":
         gid = message.guild.id
-        chosen = arg.lower() if arg.lower() in ("track","queue","off") else None
+        chosen = arg.lower() if arg.lower() in ("track", "queue", "off") else None
         loop_modes[gid] = None if chosen == "off" else (chosen or next_loop_mode(loop_modes.get(gid)))
         await message.channel.send(f"🔁 Loop: **{get_loop_label(gid)}**")
         await update_now_playing_message(gid)
@@ -1002,23 +1024,23 @@ def parse_channel_arg(guild, arg):
 async def play_slash(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     await enqueue_song(interaction.guild, interaction.channel, interaction.user, query,
-                       lambda embed=None, view=None, text=None: interaction.followup.send(content=text, embed=embed, view=view))
+                        lambda embed=None, view=None, text=None: interaction.followup.send(content=text, embed=embed, view=view))
 
 @bot.tree.command(name="247", description="Toggle 24/7 mode")
 async def mode_247_slash(interaction: discord.Interaction):
     gid = interaction.guild.id
     mode_247[gid] = not mode_247.get(gid, False)
-    embed = discord.Embed(description=f"🔁 24/7 mode: **{'enabled' if mode_247[gid] else 'disabled'}**", color=PURPLE)
+    embed = discord.Embed(description=f"24/7 mode: **{'enabled' if mode_247[gid] else 'disabled'}**", color=PURPLE)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="leave", description="Make bot leave voice")
+@bot.tree.command(name="leave", description="Make the bot leave voice")
 async def leave_slash(interaction: discord.Interaction):
     vc = interaction.guild.voice_client
     if vc:
         await vc.disconnect()
-        await interaction.response.send_message("👋 Left VC.")
+        await interaction.response.send_message("👋 Left the voice channel.")
     else:
-        await interaction.response.send_message("❌ Not in VC.", ephemeral=True)
+        await interaction.response.send_message("❌ Not in a voice channel.", ephemeral=True)
 
 @bot.tree.command(name="setpfp", description="Change bot avatar (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1050,10 +1072,10 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         await update_bot_presence()
-        print(f"✅ Logged in as {bot.user}")
-        print(f"✅ Synced {len(synced)} slash commands")
-        print(f"✅ In {len(bot.guilds)} servers")
-        print(f"✅ Default prefix: &")
+        print(f"Logged in as {bot.user}")
+        print(f"Synced {len(synced)} slash commands")
+        print(f"In {len(bot.guilds)} servers")
+        print(f"Default prefix: &")
     except Exception as e:
         print(f"[ERROR] {e}")
 
@@ -1073,5 +1095,6 @@ async def on_guild_remove(guild):
 token = os.getenv("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN not set.")
+
 bot.run(token)
 
